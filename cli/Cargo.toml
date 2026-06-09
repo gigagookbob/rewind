@@ -4,7 +4,7 @@ version = "0.13.16"
 edition = "2024"
 description = "CLI tool that analyzes AI coding session logs and extracts daily development insights"
 license = "MIT"
-repository = "https://github.com/gigagookbob/rwd"
+repository = "https://github.com/gigagookbob/rewind"
 authors = ["gigagookbob"]
 
 [dependencies]

@@ -53,7 +53,7 @@ This release focuses on session discovery reliability and cleaner daily summarie
 
 ### Highlights
 - Compared against `v0.13.1` to keep the summary scoped to this release.
-- Install with `cargo install --git https://github.com/gigagookbob/rwd.git` or update with `rwd update`.
+- Install with `cargo install --git https://github.com/gigagookbob/rewind.git` or update with `rwd update`.
 
 ### Bug Fixes
 - parse GitHub release tag_name correctly in installer (#84)

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-const REPO: &str = "gigagookbob/rwd";
+const REPO: &str = "gigagookbob/rewind";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Returns true if `latest` is strictly newer than `current` using semver.

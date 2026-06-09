@@ -2,16 +2,16 @@
 
 if [ -z "${BASH_VERSION:-}" ]; then
     echo "Error: This installer requires bash." >&2
-    echo "Run: curl -fsSL https://raw.githubusercontent.com/gigagookbob/rwd/main/install.sh | bash" >&2
+    echo "Run: curl -fsSL https://raw.githubusercontent.com/gigagookbob/rewind/main/cli/install.sh | bash" >&2
     exit 1
 fi
 
 set -euo pipefail
 
 # rwd install script
-# Usage: curl -fsSL https://raw.githubusercontent.com/gigagookbob/rwd/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/gigagookbob/rewind/main/cli/install.sh | bash
 
-REPO="gigagookbob/rwd"
+REPO="gigagookbob/rewind"
 INSTALL_DIR="${RWD_INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="rwd"
 

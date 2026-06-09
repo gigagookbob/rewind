@@ -23,7 +23,7 @@ rwd answers **"What did I decide today, and why?"** — it extracts decisions, c
 ### One-line install (macOS / Linux / WSL2)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gigagookbob/rwd/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/gigagookbob/rewind/main/cli/install.sh | bash
 ```
 
 By default, this installs `rwd` to `~/.local/bin` (override with `RWD_INSTALL_DIR`).
@@ -40,13 +40,13 @@ Native Windows is not supported.
 If you're on Windows, install WSL2 first, open a Linux shell (for example Ubuntu), then run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gigagookbob/rwd/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/gigagookbob/rewind/main/cli/install.sh | bash
 ```
 
 ### Build from source
 
 ```bash
-cargo install --git https://github.com/gigagookbob/rwd.git
+cargo install --git https://github.com/gigagookbob/rewind.git
 ```
 
 ### Prebuilt binary targets

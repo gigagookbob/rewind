@@ -57,15 +57,14 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build release binary
+        working-directory: cli
         run: |
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=/workspace --remap-path-prefix=$RUNNER_TEMP=/runner-temp --remap-path-prefix=$HOME=/home/runner"
           cargo build --release --target ${{ matrix.target }}
 
       - name: Package binary
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../rwd-${{ matrix.target }}.tar.gz rwd
-          cd ../../..
+        working-directory: cli
+        run: tar czf ../rwd-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release rwd
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

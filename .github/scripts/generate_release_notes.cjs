@@ -108,7 +108,7 @@ module.exports = async ({ github, context, core }) => {
     lines.push(`- Compared against \`${previousTag}\` to keep the summary scoped to this release.`);
   }
   lines.push(`- Tagged as \`${tagName}\` from commit \`${targetSha.slice(0, 7)}\`.`);
-  lines.push("- Install with `cargo install --git https://github.com/gigagookbob/rwd.git` or update with `rwd update`.");
+  lines.push("- Install with `cargo install --git https://github.com/gigagookbob/rewind.git` or update with `rwd update`.");
   lines.push("");
 
   for (const [title, prs] of categories) {

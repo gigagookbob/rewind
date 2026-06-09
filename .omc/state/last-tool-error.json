@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"ls -la /Users/max/Workspace/hobby/rewind/ 2>/dev/null; echo \\\"---GIT---\\\"; git -C /Users/max/Workspace/hobby/rewind status 2>&1 | head -5; echo \\\"---ROOT PKG---\\\"; cat /Users/max/Workspace...",
+  "error": "Exit code 1\ntotal 24\ndrwxr-xr-x@ 10 max  staff   320 Jun  9 09:46 .\ndrwxr-xr-x@  6 max  staff   192 Jun  9 09:33 ..\ndrwxr-xr-x@ 12 max  staff   384 Jun  9 09:48 .git\ndrwxr-xr-x@  6 max  staff   192 Jun  9 09:46 .github\n-rw-r--r--@  1 max  staff   232 Jun  9 09:25 .gitignore\ndrwxr-xr-x@  3 max  staff    96 Jun  9 09:51 .omc\n-rw-r--r--@  1 max  staff  1068 Apr 18 09:57 LICENSE\n-rw-r--r--@  1 max  staff  1387 Jun  9 09:26 README.md\ndrwxr-xr-x@ 18 max  staff   576 Jun  9 09:46 cli\ndrwxr-xr-x@ 20 max...",
+  "timestamp": "2026-06-09T00:51:53.788Z",
+  "retry_count": 1
+}
