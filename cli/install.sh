@@ -48,9 +48,6 @@ case "${OS}-${ARCH}" in
     Darwin-arm64)
         ASSET="rwd-aarch64-apple-darwin.tar.gz"
         ;;
-    Darwin-x86_64)
-        ASSET="rwd-x86_64-apple-darwin.tar.gz"
-        ;;
     Linux-x86_64)
         ASSET="rwd-x86_64-unknown-linux-gnu.tar.gz"
         ;;

@@ -193,7 +193,6 @@ fn detect_asset_name() -> Result<String, Box<dyn std::error::Error>> {
 
     let name = match (os, arch) {
         ("macos", "aarch64") => "rwd-aarch64-apple-darwin.tar.gz",
-        ("macos", "x86_64") => "rwd-x86_64-apple-darwin.tar.gz",
         ("linux", "x86_64") => "rwd-x86_64-unknown-linux-gnu.tar.gz",
         _ => return Err(crate::messages::error::unsupported_platform(os, arch).into()),
     };

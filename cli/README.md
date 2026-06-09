@@ -52,7 +52,6 @@ cargo install --git https://github.com/gigagookbob/rewind.git
 ### Prebuilt binary targets
 
 - `aarch64-apple-darwin` (macOS Apple Silicon)
-- `x86_64-apple-darwin` (macOS Intel)
 - `x86_64-unknown-linux-gnu` (Linux x86_64)
 
 > If macOS shows "unidentified developer" warning:
