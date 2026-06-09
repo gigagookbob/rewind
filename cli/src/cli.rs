@@ -1,0 +1,178 @@
+use clap::{Parser, Subcommand};
+
+/// CLI tool for analyzing AI coding session logs and extracting daily dev insights
+#[derive(Parser)]
+#[command(
+    name = "rwd",
+    version,
+    about,
+    after_help = "\
+Examples:
+  rwd today                         Analyze and print results
+  rwd today --no-cache              Force fresh analysis (ignore cache)
+  rwd today -v                      Show detailed execution plan
+  rwd today -b                      Run in background, notify when done
+  rwd today --date 2026-04-09       Analyze a specific date
+  rwd summary                       Summarize today's work and save to Obsidian
+  rwd summary --no-cache            Refresh analysis before summary
+  rwd summary --date 2026-04-09     Summarize a specific date
+  rwd slack                         Generate Slack message and copy to clipboard
+  rwd slack --no-cache              Refresh analysis before Slack message
+  rwd slack --date 2026-04-09       Generate Slack message for a specific date
+  rwd init                          Set up provider credentials and output path
+  rwd config                        Interactive settings menu
+  rwd config output-path ~/vault    Set Obsidian vault path
+  rwd config provider codex         Switch LLM provider
+  rwd config codex-model gpt-5.4    Set Codex model
+  rwd config codex-reasoning xhigh  Set Codex reasoning effort
+  rwd config claude-include-automated true  Include automated Claude sessions by default
+  rwd config api-key sk-...         Set API key for current provider
+  rwd config openai-api-key sk-...  Set OpenAI API key
+  rwd config anthropic-api-key ...  Set Anthropic API key
+  rwd auth status                   Show provider auth status
+  rwd reset --dry-run               Preview files that reset will remove
+  rwd reset --yes                   Reset config/cache without confirmation
+  rwd doctor                        Run environment and install diagnostics
+  rwd version                       Print current rwd version
+  rwd update                        Update to the latest version"
+)]
+pub struct Cli {
+    /// Subcommand to execute
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+/// Available subcommands
+#[derive(Subcommand)]
+pub enum Commands {
+    /// Analyze today's AI coding sessions and save insights to Obsidian
+    #[command(after_help = "\
+Examples:
+  rwd today                    Analyze and print results
+  rwd today --no-cache         Force fresh analysis (ignore cache)
+  rwd today -v                 Show detailed execution plan
+  rwd today -b                 Run in background, notify when done
+  rwd today --date 2026-04-09  Analyze a specific date
+  rwd today --include-automated  Include automated Claude sessions")]
+    Today {
+        /// Show detailed execution plan per session
+        #[arg(long, short)]
+        verbose: bool,
+        /// Override output language (en/ko)
+        #[arg(long)]
+        lang: Option<String>,
+        /// Target date (YYYY-MM-DD), defaults to today
+        #[arg(long)]
+        date: Option<String>,
+        /// Run in background with OS notification on completion
+        #[arg(long, short)]
+        background: bool,
+        /// Ignore cache and force fresh analysis
+        #[arg(long)]
+        no_cache: bool,
+        /// Include automated Claude sessions (default excludes them)
+        #[arg(long)]
+        include_automated: bool,
+        /// Internal: run as background worker (hidden from help)
+        #[arg(long, hide = true)]
+        worker: bool,
+    },
+    /// Summarize today's work and save to Obsidian (runs today first if needed)
+    Summary {
+        /// Override output language (en/ko)
+        #[arg(long)]
+        lang: Option<String>,
+        /// Target date (YYYY-MM-DD), defaults to today
+        #[arg(long)]
+        date: Option<String>,
+        /// Refresh today's analysis before generating summary
+        #[arg(long)]
+        no_cache: bool,
+    },
+    /// Generate a Slack-ready message and copy to clipboard
+    Slack {
+        /// Override output language (en/ko)
+        #[arg(long)]
+        lang: Option<String>,
+        /// Target date (YYYY-MM-DD), defaults to today
+        #[arg(long)]
+        date: Option<String>,
+        /// Refresh today's analysis before generating Slack message
+        #[arg(long)]
+        no_cache: bool,
+    },
+    /// Run initial setup (provider credentials, output path)
+    Init,
+    /// Change a config value (interactive menu if no args)
+    #[command(after_help = "\
+Examples:
+  rwd config                        Interactive settings menu
+  rwd config output-path ~/vault    Set Obsidian vault path
+  rwd config provider codex         Switch LLM provider
+  rwd config api-key sk-...         Set API key for current provider (openai/anthropic)
+  rwd config openai-api-key sk-...  Set OpenAI API key
+  rwd config anthropic-api-key ...  Set Anthropic API key
+  rwd config codex-model gpt-5.4    Set Codex model
+  rwd config codex-reasoning xhigh  Set Codex reasoning effort
+  rwd config claude-include-automated true  Include automated Claude sessions by default")]
+    Config {
+        /// Config key (output-path, provider, api-key, openai-api-key, anthropic-api-key, codex-model, codex-reasoning, claude-include-automated)
+        key: Option<String>,
+        /// Value to set
+        value: Option<String>,
+    },
+    /// Update to the latest version via GitHub Releases
+    Update,
+    /// Reset local rwd config/cache state
+    Reset {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+        /// Preview reset targets without removing files
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Show authentication status for current provider
+    #[command(after_help = "\
+Example:
+  rwd auth status  Show provider auth method and credential state")]
+    Auth {
+        #[command(subcommand)]
+        action: AuthAction,
+    },
+    /// Run environment and install diagnostics
+    Doctor,
+    /// Print current rwd version
+    Version,
+}
+
+#[derive(Subcommand)]
+pub enum AuthAction {
+    /// Show provider auth method and credential state
+    Status,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands};
+    use clap::error::ErrorKind;
+    use clap::Parser;
+
+    #[test]
+    fn test_parse_version_subcommand() {
+        let parsed = Cli::try_parse_from(["rwd", "version"]);
+        assert!(parsed.is_ok());
+        if let Ok(cli) = parsed {
+            assert!(matches!(cli.command, Commands::Version));
+        }
+    }
+
+    #[test]
+    fn test_parse_version_flag_displays_version() {
+        let parsed = Cli::try_parse_from(["rwd", "--version"]);
+        assert!(parsed.is_err());
+        if let Err(err) = parsed {
+            assert_eq!(err.kind(), ErrorKind::DisplayVersion);
+        }
+    }
+}

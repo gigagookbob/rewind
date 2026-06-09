@@ -1,0 +1,21 @@
+/* === Tokens === */
+:root {
+  --bg-primary: #09090b;
+  --bg-secondary: #18181b;
+  --border: #27272a;
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #a1a1aa;
+  --text-dim: #8a8a94;
+  --accent-green: #22c55e;
+  --accent-red: #ef4444;
+  --accent-yellow: #eab308;
+  --cta-bg: #fafafa;
+  --cta-text: #09090b;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  --max-width: none;
+  --content-width: 960px;
+  --gutter: clamp(16px, calc((100vw - var(--content-width)) / 2), 320px);
+  --section-padding: clamp(48px, 6vw, 80px) 0;
+}

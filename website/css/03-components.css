@@ -1,0 +1,485 @@
+/* === Nav === */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(9, 9, 11, 0.85);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.nav-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  max-width: var(--max-width);
+  padding: 10px var(--gutter);
+}
+
+.nav-left {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+}
+
+.nav-logo {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.5px;
+}
+
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nav-link {
+  font-size: 14px;
+  color: var(--text-muted);
+  transition: color 0.2s;
+}
+
+.nav-link:hover {
+  color: var(--text-primary);
+}
+
+.nav-github-btn {
+  font-size: 13px;
+  color: var(--text-primary);
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.nav-github-btn:hover {
+  background: var(--bg-secondary);
+}
+
+/* === Hero === */
+.hero {
+  text-align: center;
+  padding: clamp(48px, 6vw, 80px) 0 clamp(24px, 4vw, 40px);
+}
+
+.hero-title {
+  font-size: clamp(36px, 7vw, 72px);
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: clamp(-3px, -0.25vw, -1px);
+  line-height: 1.1;
+  margin: 0 auto;
+}
+
+.hero-subtitle {
+  font-size: 16px;
+  color: var(--text-muted);
+  margin-top: 20px;
+  margin-left: auto;
+  margin-right: auto;
+  line-height: 1.6;
+  max-width: 600px;
+}
+
+.hero-cta {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 32px;
+}
+
+/* === Buttons === */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition:
+    opacity 0.2s,
+    background 0.2s;
+  border: none;
+  text-decoration: none;
+}
+
+.btn:hover {
+  opacity: 0.9;
+}
+
+.btn-primary {
+  background: var(--cta-bg);
+  color: var(--cta-text);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  background: var(--bg-secondary);
+}
+
+/* === Terminal === */
+.terminal-section {
+  padding: clamp(64px, 12vw, 160px) 0 clamp(40px, 6vw, 80px);
+}
+
+.terminal {
+  margin: 0;
+  max-width: none;
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.terminal-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.dot-red {
+  background: var(--accent-red);
+}
+
+.dot-yellow {
+  background: var(--accent-yellow);
+}
+
+.dot-green {
+  background: var(--accent-green);
+}
+
+.terminal-title {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-left: 8px;
+}
+
+.terminal-body {
+  padding: 0;
+}
+
+/* === Feature cards === */
+.feature-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.feature-card {
+  background: var(--bg-secondary);
+  border-radius: 10px;
+  padding: 24px;
+  border: 1px solid var(--border);
+}
+
+.feature-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.3px;
+  line-height: 1.3;
+  margin: 0 0 10px;
+}
+
+.feature-desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.feature-desc code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--bg-primary);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.feature-note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* === Install === */
+.install-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.install-title {
+  font-size: clamp(22px, 2.8vw, 32px);
+}
+
+.install-block {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+  gap: 16px;
+}
+
+.install-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.install-platform {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.install-cmd {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-secondary);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.copy-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s;
+}
+
+.copy-btn:hover {
+  color: var(--text-secondary);
+  border-color: var(--text-dim);
+}
+
+.copy-btn.copied {
+  color: var(--accent-green);
+  border-color: var(--accent-green);
+}
+
+.install-note {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+/* === FAQ === */
+.faq-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 760px);
+  gap: 40px;
+  justify-content: space-between;
+  align-items: start;
+}
+
+.faq-title {
+  text-align: left;
+  font-size: clamp(24px, 2.6vw, 30px);
+  font-weight: 500;
+  letter-spacing: -1px;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.faq-list {
+  max-width: none;
+  margin: 0;
+  border-top: 1px solid rgba(250, 250, 250, 0.08);
+}
+
+.faq-item {
+  border-bottom: 1px solid rgba(250, 250, 250, 0.08);
+}
+
+.faq-question {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 0;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  text-align: left;
+}
+
+.faq-icon {
+  font-size: 13px;
+  color: var(--text-dim);
+  transition: transform 0.3s;
+  flex-shrink: 0;
+  margin-left: 24px;
+}
+
+.faq-item.open .faq-icon {
+  transform: rotate(45deg);
+  color: var(--text-primary);
+}
+
+.faq-answer {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+  padding-right: 24px;
+}
+
+.faq-answer p {
+  padding-bottom: 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* === Footer CTA === */
+.footer-cta {
+  text-align: center;
+  padding: clamp(56px, 7vw, 80px) 0;
+  border-top: 1px solid var(--border);
+}
+
+.footer-cta-title {
+  font-size: clamp(22px, 2.8vw, 32px);
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.5px;
+  margin-bottom: 8px;
+}
+
+.footer-cta-sub {
+  font-size: 15px;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+}
+
+/* === Footer === */
+.footer {
+  padding: 48px 0 32px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.footer-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.footer-left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.footer-logo {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: -0.5px;
+}
+
+.footer-nav {
+  display: flex;
+  gap: 20px;
+}
+
+.footer-nav a {
+  font-size: 13px;
+  color: var(--text-dim);
+  transition: color 0.2s;
+}
+
+.footer-nav a:hover {
+  color: var(--text-secondary);
+}
+
+.footer-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.footer-right a {
+  color: var(--text-dim);
+  transition: color 0.2s;
+}
+
+.footer-right a:hover {
+  color: var(--text-secondary);
+}
+
+.footer-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 24px 0;
+}
+
+.footer-bottom {
+  color: var(--text-dim);
+}
+
+/* === Maker's Note === */
+.maker-note {
+  max-width: 620px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.maker-note-body {
+  font-style: italic;
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.maker-note-sign {
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+}

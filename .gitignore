@@ -1,0 +1,14 @@
+# 저장소 전역 ignore — 프로젝트별 ignore는 각 하위 폴더(cli/, website/)의 .gitignore 참조
+
+# OS / editor
+.DS_Store
+
+# Agent / tooling scratch
+.superpowers/
+
+# Secrets
+.env
+.env*.local
+
+# Logs
+firebase-debug.log

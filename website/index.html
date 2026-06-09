@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>rwd: Rewind your day. Daily notes for Claude Code, Codex, and other AI agents.</title>
+    <meta
+      name="description"
+      content="Open-source CLI for AI agents like Claude Code and Codex. Turns your coding day into one daily note of decisions, questions, and corrections."
+    />
+    <meta name="robots" content="index,follow,max-image-preview:large" />
+    <meta name="theme-color" content="#09090b" />
+    <link rel="canonical" href="https://www.rewind.day/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+
+    <!-- Open Graph -->
+    <meta
+      property="og:title"
+      content="rwd: Rewind your day. Daily notes for Claude Code, Codex, and other AI agents."
+    />
+    <meta
+      property="og:description"
+      content="Open-source CLI for AI agents like Claude Code and Codex. Turns your coding day into one daily note of decisions, questions, and corrections."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://www.rewind.day/" />
+    <meta property="og:site_name" content="rwd" />
+    <meta property="og:image" content="https://www.rewind.day/assets/og-image.png" />
+    <meta property="og:image:secure_url" content="https://www.rewind.day/assets/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="rwd, an open-source CLI that turns your AI agent sessions into a daily note."
+    />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="rwd: Rewind your day. Daily notes for Claude Code, Codex, and other AI agents."
+    />
+    <meta
+      name="twitter:description"
+      content="Open-source CLI for AI agents like Claude Code and Codex. Turns your coding day into one daily note of decisions, questions, and corrections."
+    />
+    <meta name="twitter:image" content="https://www.rewind.day/assets/og-image.png" />
+    <meta
+      name="twitter:image:alt"
+      content="rwd, an open-source CLI that turns your AI agent sessions into a daily note."
+    />
+
+    <!-- Schema.org -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "name": "rwd",
+            "url": "https://www.rewind.day/",
+            "description": "Open-source CLI for AI agents like Claude Code and Codex. Turns your coding day into one daily note of decisions, questions, and corrections."
+          },
+          {
+            "@type": "SoftwareApplication",
+            "name": "rwd",
+            "applicationCategory": "DeveloperApplication",
+            "operatingSystem": "macOS, Linux, WSL2 (Linux shell)",
+            "description": "Open-source CLI for AI agents like Claude Code and Codex. Turns your coding day into one daily note of decisions, questions, and corrections.",
+            "url": "https://www.rewind.day/",
+            "image": "https://www.rewind.day/assets/og-image.png",
+            "license": "https://github.com/gigagookbob/rwd/blob/main/LICENSE",
+            "sameAs": ["https://github.com/gigagookbob/rwd"],
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            },
+            "featureList": [
+              "Capture sessions from Claude Code and Codex automatically",
+              "Keep decisions, questions, and corrections in a daily Markdown note",
+              "Mask API keys, tokens, and private IPs locally before analysis",
+              "Generate shareable summaries and Slack-ready posts"
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Which AI agents does rwd read?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Claude Code and Codex today. More CLIs on the way."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Where do the notes go?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Any folder you choose, as Markdown. Works well with Obsidian but doesn't require it."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "English or Korean output?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Both. Add --lang en or --lang ko to today, summary, or slack."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What does it cost?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "rwd is free and MIT licensed. You bring your own API key for whichever model it uses."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Is my data sent raw to the model?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. API keys, bearer tokens, and private IPs are masked locally before anything is sent."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+
+    <link rel="stylesheet" href="css/00-tokens.css?v=6" />
+    <link rel="stylesheet" href="css/01-base.css?v=6" />
+    <link rel="stylesheet" href="css/02-layout.css?v=6" />
+    <link rel="stylesheet" href="css/03-components.css?v=6" />
+    <link rel="stylesheet" href="css/04-showcase.css?v=6" />
+    <link rel="stylesheet" href="css/05-utilities.css?v=6" />
+    <link rel="stylesheet" href="css/06-responsive.css?v=6" />
+  </head>
+  <body>
+    <svg
+      aria-hidden="true"
+      focusable="false"
+      width="0"
+      height="0"
+      style="position: absolute; width: 0; height: 0; overflow: hidden"
+    >
+      <symbol id="icon-github" viewBox="0 0 32 32">
+        <path
+          fill-rule="evenodd"
+          clip-rule="evenodd"
+          d="M16 0C7.16 0 0 7.16 0 16C0 23.08 4.58 29.06 10.94 31.18C11.74 31.32 12.04 30.84 12.04 30.42C12.04 30.04 12.02 28.78 12.02 27.44C8 28.18 6.96 26.46 6.64 25.56C6.46 25.1 5.68 23.68 5 23.3C4.44 23 3.64 22.26 4.98 22.24C6.24 22.22 7.14 23.4 7.44 23.88C8.88 26.3 11.18 25.62 12.1 25.2C12.24 24.16 12.66 23.46 13.12 23.06C9.56 22.66 5.84 21.28 5.84 15.16C5.84 13.42 6.46 11.98 7.48 10.86C7.32 10.46 6.76 8.82 7.64 6.62C7.64 6.62 8.98 6.2 12.04 8.26C13.32 7.9 14.68 7.72 16.04 7.72C17.4 7.72 18.76 7.9 20.04 8.26C23.1 6.18 24.44 6.62 24.44 6.62C25.32 8.82 24.76 10.46 24.6 10.86C25.62 11.98 26.24 13.4 26.24 15.16C26.24 21.3 22.5 22.66 18.94 23.06C19.52 23.56 20.02 24.52 20.02 26.02C20.02 28.16 20 29.88 20 30.42C20 30.84 20.3 31.34 21.1 31.18C27.42 29.06 32 23.06 32 16C32 7.16 24.84 0 16 0Z"
+        />
+      </symbol>
+      <symbol
+        id="icon-copy"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+      </symbol>
+      <symbol
+        id="icon-check"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <polyline points="20 6 9 17 4 12" />
+      </symbol>
+    </svg>
+
+    <!-- Nav -->
+    <nav class="nav" aria-label="Primary">
+      <div class="nav-inner">
+        <div class="nav-left">
+          <a href="/" class="nav-logo">rwd</a>
+        </div>
+        <div class="nav-right">
+          <a
+            href="https://github.com/gigagookbob/rwd#readme"
+            target="_blank"
+            rel="noopener"
+            class="nav-link"
+            >Docs</a
+          >
+          <a
+            href="https://github.com/gigagookbob/rwd"
+            target="_blank"
+            rel="noopener"
+            class="nav-github-btn"
+          >
+            <svg class="icon" width="14" height="14" viewBox="0 0 32 32" fill="currentColor">
+              <use href="#icon-github"></use>
+            </svg>
+            <span>Star on GitHub</span>
+          </a>
+        </div>
+      </div>
+    </nav>
+
+    <main>
+      <!-- Hero -->
+      <section class="hero">
+        <div class="container">
+          <h1 class="hero-title">Rewind your day.</h1>
+          <p class="hero-subtitle">
+            Decisions. Questions. Corrections. Everything you worked out with your AI agents today, stitched into one daily note.
+          </p>
+          <div class="hero-cta">
+            <a href="#install" class="btn btn-primary">Install rwd</a>
+            <a
+              href="https://github.com/gigagookbob/rwd"
+              target="_blank"
+              rel="noopener"
+              class="btn btn-secondary"
+              ><svg class="icon" width="16" height="16" viewBox="0 0 32 32" fill="currentColor">
+                <use href="#icon-github"></use>
+              </svg>
+              <span>View on GitHub</span></a
+            >
+          </div>
+        </div>
+      </section>
+
+      <!-- Terminal Demo -->
+      <section class="terminal-section">
+        <div class="container">
+          <div class="terminal terminal-live" id="terminalDemo">
+            <div class="terminal-header">
+              <div class="terminal-dots">
+                <span class="dot dot-red"></span>
+                <span class="dot dot-yellow"></span>
+                <span class="dot dot-green"></span>
+              </div>
+              <span class="terminal-title">rwd today</span>
+            </div>
+            <div class="terminal-body" aria-label="rwd today output: daily session review for 2026-04-18">
+              <div class="rwd-banner">
+                <pre>  ██████  ██     ██ ██████
+  ██   ██ ██     ██ ██   ██
+  ██████  ██  █  ██ ██   ██
+  ██   ██ ██ ███ ██ ██   ██
+  ██   ██  ███ ███  ██████</pre>
+                <span class="rwd-banner-meta">rewind your day &nbsp;v0.13.15</span>
+              </div>
+
+              <div class="rwd-summary-card">
+                <div class="rwd-summary-head">2026-04-18</div>
+                <div class="rwd-summary-body">
+                  <div class="rwd-summary-row">
+                    <div class="rwd-summary-agent rwd-summary-agent--claude">Claude Code</div>
+                    <div class="rwd-summary-meta">
+                      <span>10:24 ~ 15:07</span>
+                      <span>Sessions: 6</span>
+                      <span>in 61,891,779</span>
+                      <span>out 673,146</span>
+                    </div>
+                  </div>
+                  <div class="rwd-summary-row">
+                    <div class="rwd-summary-agent rwd-summary-agent--codex">Codex</div>
+                    <div class="rwd-summary-meta">
+                      <span>10:13 ~ 10:52</span>
+                      <span>Sessions: 1</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <span class="rwd-line rwd-line--magenta">Analyzing insights via Codex...</span>
+              <span class="rwd-line rwd-line--dim">&#10003; Analyzing 6 sessions (est. 45,382 tokens)</span>
+              <span class="rwd-line rwd-line--check">&#10003; [1/6] Done &nbsp; &#10003; [2/6] Done &nbsp; &#10003; [3/6] Done &nbsp; &#10003; [4/6] Done &nbsp; &#10003; [5/6] Done &nbsp; &#10003; [6/6] Done</span>
+
+              <div class="rwd-session-block">
+                <div class="rwd-session-head">&#9656; Session: 6e70ea19</div>
+                <p class="rwd-session-summary">Migrated the status bar context indicator from percent to raw tokens, then fixed values getting stuck at <code>[1 / 1.0M]</code> by including cache tokens in the total.</p>
+
+                <div class="rwd-section-label">Key Decisions</div>
+                <ul class="rwd-list">
+                  <li>
+                    Show context usage as raw tokens instead of a percentage.
+                    <span class="rwd-reason">&rarr; wanted a precise number, not an approximate ratio.</span>
+                  </li>
+                </ul>
+
+                <div class="rwd-section-label">Questions &amp; Curiosities</div>
+                <ul class="rwd-list">
+                  <li>Why does the status bar keep showing <code>[1 / 1.0M]</code>?</li>
+                </ul>
+
+                <div class="rwd-section-label">Model Corrections</div>
+                <ul class="rwd-corrections">
+                  <li class="rwd-correction">
+                    <span class="rwd-correction-wrong">Said the context-token fix was complete.</span>
+                    <span class="rwd-correction-right">Status bar still showed <code>[1 / 1.0M]</code>. Fix missed cache tokens.</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- Showcase 1: Capture -->
+      <section class="showcase fade-in">
+        <div class="showcase-inner">
+          <div class="showcase-text">
+            <span class="showcase-eyebrow">01 · Capture</span>
+            <h2 class="showcase-title">One command scans the whole day</h2>
+            <p class="showcase-desc">
+              <code>rwd today</code> walks every AI agent session across your projects, extracts what happened, and writes one structured note.
+            </p>
+            <p class="showcase-note">Claude Code and Codex today. More agents on the way.</p>
+          </div>
+          <div class="mockup mockup-progress">
+            <div class="mockup-header">
+              <div class="mockup-dots"><span></span><span></span><span></span></div>
+              <span class="mockup-title">~ rwd today</span>
+            </div>
+            <div class="mockup-body">
+              <span class="progress-line progress-banner">rwd &nbsp;v0.13.15 &nbsp;&middot;&nbsp; 2026-04-18</span>
+              <span class="progress-line progress-magenta">Analyzing insights via Codex...</span>
+              <span class="progress-line progress-info">&#10003; Analyzing 6 sessions (est. 45,382 tokens)</span>
+              <span class="progress-line progress-step-done">&#10003; [1/6] 865ae218</span>
+              <span class="progress-line progress-step-done">&#10003; [2/6] 73db096f</span>
+              <span class="progress-line progress-step-done">&#10003; [3/6] 6e70ea19</span>
+              <span class="progress-line progress-step-done">&#10003; [4/6] 7a239c41</span>
+              <span class="progress-line progress-step-done">&#10003; [5/6] 4a267ae8</span>
+              <span class="progress-line progress-step-done">&#10003; [6/6] de3292ba</span>
+              <span class="progress-divider" aria-hidden="true"></span>
+              <span class="progress-line progress-info">Markdown saved: <span class="progress-uuid">~/Daily/2026-04-18.md</span></span>
+              <span class="progress-line progress-step-done">&#10003; Today's daily rewind is ready!</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- Showcase 2: Rewind -->
+      <section class="showcase fade-in">
+        <div class="showcase-inner showcase-inner--reversed">
+          <div class="showcase-text">
+            <span class="showcase-eyebrow">02 · Rewind</span>
+            <h2 class="showcase-title">Every decision, every correction, kept.</h2>
+            <p class="showcase-desc">
+              Each note keeps what you decided. What you wondered. What you corrected. The reasoning trail AI agents strip out. Saved as Markdown, on your machine.
+            </p>
+          </div>
+          <div class="mockup mockup-note">
+            <div class="mockup-header">
+              <div class="mockup-dots"><span></span><span></span><span></span></div>
+              <span class="mockup-title">2026-04-18.md</span>
+            </div>
+            <div class="mockup-body">
+              <h3 class="note-title"># 2026-04-18 Dev Session Review</h3>
+              <div class="note-h2 note-h2--session">## Session: 6e70ea19</div>
+
+              <div class="note-h3">Work Summary</div>
+              <p class="note-p">Migrated the status-bar context indicator from percent to raw tokens. Debugged values getting stuck at 1, then fixed the sum to include cache tokens.</p>
+
+              <div class="note-h3">Key Decisions</div>
+              <ul class="note-list">
+                <li><strong>Show context usage as raw tokens, not a percent.</strong> Wanted a precise number in the status bar, not an approximate ratio.</li>
+              </ul>
+
+              <div class="note-h3">Questions &amp; Curiosities</div>
+              <ul class="note-list">
+                <li>How do you swap the percent display for actual token counts?</li>
+                <li>Why does the status bar keep showing <code>[1 / 1.0M]</code>?</li>
+              </ul>
+
+              <div class="note-h3">Model Errors &amp; Corrections</div>
+              <div class="note-correction">
+                <span class="note-correction-model">Said the token-count fix was complete.</span>
+                <span class="note-correction-fix">Status bar still showed <code>[1 / 1.0M]</code>. The fix missed cache tokens.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- Showcase 3: Redact -->
+      <section class="showcase fade-in">
+        <div class="showcase-inner">
+          <div class="showcase-text">
+            <span class="showcase-eyebrow">03 · Redact</span>
+            <h2 class="showcase-title">Secrets masked before analysis</h2>
+            <p class="showcase-desc">
+              Sensitive values get masked locally before anything touches an LLM. API keys, bearer tokens, private IPs stay on your machine.
+            </p>
+          </div>
+          <div class="mockup mockup-diff">
+            <div class="mockup-header">
+              <div class="mockup-dots"><span></span><span></span><span></span></div>
+              <span class="mockup-title">redact · before / after</span>
+            </div>
+            <div class="mockup-body">
+              <div class="diff-cols">
+                <div class="diff-col diff-col--raw">
+                  <div class="diff-col-label">Raw session log</div>
+                  <span class="diff-line"><span class="diff-line--dim">export</span> OPENAI_API_KEY=<span class="diff-secret">sk-proj-Rip3ZAtl...</span></span>
+                  <span class="diff-line"><span class="diff-line--dim">curl -H</span> "Authorization: Bearer <span class="diff-secret">eyJhbGciOi...</span>"</span>
+                  <span class="diff-line"><span class="diff-line--dim">db_host:</span> <span class="diff-secret">192.168.1.42</span>:5432</span>
+                  <span class="diff-line"><span class="diff-line--dim">anthropic_api_key=</span><span class="diff-secret">sk-ant-api03-dSYa...</span></span>
+                </div>
+                <div class="diff-col diff-col--masked">
+                  <div class="diff-col-label">Sent to the model</div>
+                  <span class="diff-line"><span class="diff-line--dim">export</span> OPENAI_API_KEY=<span class="diff-mask">[REDACTED:API_KEY]</span></span>
+                  <span class="diff-line"><span class="diff-line--dim">curl -H</span> "Authorization: Bearer <span class="diff-mask">[REDACTED:BEARER]</span>"</span>
+                  <span class="diff-line"><span class="diff-line--dim">db_host:</span> <span class="diff-mask">[REDACTED:PRIVATE_IP]</span>:5432</span>
+                  <span class="diff-line"><span class="diff-line--dim">anthropic_api_key=</span><span class="diff-mask">[REDACTED:API_KEY]</span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- Showcase 4: Share -->
+      <section class="showcase fade-in">
+        <div class="showcase-inner showcase-inner--reversed">
+          <div class="showcase-text">
+            <span class="showcase-eyebrow">04 · Share</span>
+            <h2 class="showcase-title">Team-ready updates, no rewrite</h2>
+            <p class="showcase-desc">
+              <code>rwd summary</code> hands you a progress report. <code>rwd slack</code> drops a Slack-ready post in your clipboard, grouped by theme.
+            </p>
+          </div>
+          <div class="mockup mockup-chat">
+            <div class="mockup-header">
+              <div class="mockup-dots"><span></span><span></span><span></span></div>
+              <span class="mockup-title">~ rwd slack</span>
+            </div>
+            <div class="mockup-body">
+              <div class="chat-header">
+                <span class="chat-channel">dev-daily</span>
+                <span class="chat-meta">Today at 3:14 PM</span>
+              </div>
+              <div class="chat-message">
+                <div class="chat-avatar" aria-hidden="true">G</div>
+                <div>
+                  <div class="chat-author-line">
+                    <span class="chat-author">gigagookbob</span>
+                    <span class="chat-time">via rwd &middot; 3:14 PM</span>
+                  </div>
+                  <div class="chat-title">[Today's Work Update]</div>
+                  <div class="chat-body">
+                    <ul class="chat-list">
+                      <li><span class="chat-tag">(Landing Page Messaging)</span> Rewrote the main page voice and flow for a clearer, less AI-sounding read.</li>
+                      <li><span class="chat-tag">(Showcase Planning)</span> Rebuilt the missing showcase using real <code>rwd</code> output instead of stock copy.</li>
+                      <li><span class="chat-tag">(Usage Display)</span> Switched the status bar from percent to real token counts, then fixed cache tokens in the sum.</li>
+                      <li><span class="chat-tag">(Launch Readiness)</span> Completed release checks and fixed an access-related issue before cutting the tag.</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+              <div class="chat-footer">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                Copied to clipboard
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- Maker's Note -->
+      <section class="section fade-in" aria-label="Maker's Note">
+        <div class="container">
+          <div class="maker-note">
+            <p class="maker-note-body">
+              I code with Claude every day. The code ends up in git. My decisions, my corrections, the questions I was working through don't. I wanted to keep them, so I wrote rwd.
+            </p>
+            <p class="maker-note-sign">gigagookbob</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- Install -->
+      <section class="section fade-in" id="install">
+        <div class="container">
+          <h2 class="section-title install-title">Install</h2>
+          <div class="section-subtitle-spacer"></div>
+          <div class="install-blocks">
+            <div class="install-block">
+              <div class="install-info">
+                <span class="install-platform">Linux / macOS / WSL2 (Linux shell)</span>
+                <code class="install-cmd"
+                  >curl -fsSL https://raw.githubusercontent.com/gigagookbob/rwd/main/install.sh |
+                  sh</code
+                >
+              </div>
+              <button
+                class="copy-btn"
+                data-copy="curl -fsSL https://raw.githubusercontent.com/gigagookbob/rwd/main/install.sh | sh"
+              >
+                <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24">
+                  <use href="#icon-copy"></use>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <p class="install-note">
+            Native Windows is not supported. Use
+            <a href="https://learn.microsoft.com/en-us/windows/wsl/install" target="_blank" rel="noopener"
+              ><strong><u>WSL2</u></strong></a
+            >.
+          </p>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- FAQ -->
+      <section class="section fade-in faq-section" id="faq">
+        <div class="container faq-layout">
+          <h2 class="section-title faq-title">Frequently asked questions</h2>
+          <div class="faq-list">
+            <div class="faq-item">
+              <button class="faq-question" aria-expanded="false">
+                <span>Which AI agents does rwd read?</span>
+                <span class="faq-icon">+</span>
+              </button>
+              <div class="faq-answer">
+                <p>Claude Code and Codex today. More CLIs on the way.</p>
+              </div>
+            </div>
+            <div class="faq-item">
+              <button class="faq-question" aria-expanded="false">
+                <span>Where do the notes go?</span>
+                <span class="faq-icon">+</span>
+              </button>
+              <div class="faq-answer">
+                <p>Any folder you choose, as Markdown. Works well with Obsidian but doesn't require it.</p>
+              </div>
+            </div>
+            <div class="faq-item">
+              <button class="faq-question" aria-expanded="false">
+                <span>English or Korean output?</span>
+                <span class="faq-icon">+</span>
+              </button>
+              <div class="faq-answer">
+                <p>Both. Add <code>--lang en</code> or <code>--lang ko</code> to <code>today</code>, <code>summary</code>, or <code>slack</code>.</p>
+              </div>
+            </div>
+            <div class="faq-item">
+              <button class="faq-question" aria-expanded="false">
+                <span>What does it cost?</span>
+                <span class="faq-icon">+</span>
+              </button>
+              <div class="faq-answer">
+                <p>rwd is free and MIT licensed. You bring your own API key for whichever model it uses.</p>
+              </div>
+            </div>
+            <div class="faq-item">
+              <button class="faq-question" aria-expanded="false">
+                <span>Is my data sent raw to the model?</span>
+                <span class="faq-icon">+</span>
+              </button>
+              <div class="faq-answer">
+                <p>No. API keys, bearer tokens, and private IPs are masked locally before anything is sent.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Footer CTA -->
+      <section class="footer-cta">
+        <div class="container">
+          <h2 class="footer-cta-title">Rewind your day.</h2>
+          <p class="footer-cta-sub">Keep every decision you make.</p>
+          <div class="hero-cta">
+            <a href="#install" class="btn btn-primary">Install rwd</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-top">
+          <div class="footer-left">
+            <span class="footer-logo">rwd</span>
+            <nav class="footer-nav" aria-label="Footer">
+              <a href="https://github.com/gigagookbob/rwd#readme" target="_blank" rel="noopener"
+                >Docs</a
+              >
+              <a href="https://github.com/gigagookbob/rwd" target="_blank" rel="noopener">GitHub</a>
+              <a
+                href="https://github.com/gigagookbob/rwd/blob/main/LICENSE"
+                target="_blank"
+                rel="noopener"
+                >License</a
+              >
+            </nav>
+          </div>
+          <div class="footer-right">
+            <a
+              href="https://github.com/gigagookbob/rwd"
+              target="_blank"
+              rel="noopener"
+              aria-label="GitHub"
+            >
+              <svg width="18" height="18" viewBox="0 0 32 32" fill="currentColor">
+                <use href="#icon-github"></use>
+              </svg>
+            </a>
+          </div>
+        </div>
+        <div class="footer-divider"></div>
+        <div class="footer-bottom">
+          <span>&copy; 2026 GookbobWorld Inc. All rights reserved.</span>
+        </div>
+      </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+  </body>
+</html>

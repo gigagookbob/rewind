@@ -1,0 +1,17 @@
+changelog:
+  exclude:
+    labels:
+      - "skip-release-notes"
+  categories:
+    - title: "New Features"
+      labels: ["enhancement"]
+    - title: "Bug Fixes"
+      labels: ["bug"]
+    - title: "Performance"
+      labels: ["performance"]
+    - title: "Documentation"
+      labels: ["documentation"]
+    - title: "Maintenance"
+      labels: ["chore", "dependencies"]
+    - title: "Other Changes"
+      labels: ["*"]

@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>rwd og-image source</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body {
+        width: 1200px;
+        height: 630px;
+        background: #09090b;
+        overflow: hidden;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'Noto Sans', Roboto, sans-serif;
+        color: #fafafa;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .terminal {
+        width: 1120px;
+        height: 610px;
+        border: 1px solid #27272a;
+        border-radius: 14px;
+        background: #09090b;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .terminal-header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 20px;
+        border-bottom: 1px solid #27272a;
+        background: #0b0b0e;
+      }
+      .dots { display: flex; gap: 8px; }
+      .dot { width: 13px; height: 13px; border-radius: 50%; display: inline-block; }
+      .dot-red { background: #ef4444; }
+      .dot-yellow { background: #eab308; }
+      .dot-green { background: #22c55e; }
+      .terminal-title {
+        color: #a1a1aa;
+        font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Liberation Mono', 'Consolas', monospace;
+        font-size: 14px;
+        letter-spacing: 0.02em;
+      }
+      .terminal-body {
+        padding: 20px 26px 22px;
+        font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Liberation Mono', 'Consolas', monospace;
+        font-size: 14px;
+        line-height: 1.55;
+        color: #a1a1aa;
+        flex: 1;
+      }
+      .banner {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 16px;
+        align-items: end;
+        margin-bottom: 16px;
+        color: #22d3ee;
+      }
+      .banner pre {
+        font-family: inherit;
+        font-size: 11px;
+        line-height: 1.1;
+        margin: 0;
+        white-space: pre;
+      }
+      .banner-meta {
+        color: #8a8a94;
+        font-size: 12px;
+        padding-bottom: 2px;
+        letter-spacing: 0.02em;
+      }
+      .summary {
+        border: 1px solid #27272a;
+        border-radius: 8px;
+        background: rgba(250, 250, 250, 0.02);
+        max-width: 620px;
+        margin: 0 0 14px;
+        overflow: hidden;
+      }
+      .summary-head {
+        padding: 8px 14px;
+        border-bottom: 1px solid #27272a;
+        font-size: 13px;
+        color: #fafafa;
+        letter-spacing: 0.02em;
+      }
+      .summary-row {
+        padding: 10px 14px;
+        border-bottom: 1px solid #27272a;
+      }
+      .summary-row:last-child { border-bottom: 0; }
+      .agent {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 4px;
+        letter-spacing: 0.02em;
+      }
+      .agent-claude { color: #60a5fa; }
+      .agent-codex { color: #facc15; }
+      .meta-row {
+        font-size: 12px;
+        color: #8a8a94;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 18px;
+      }
+      .line { display: block; white-space: pre-wrap; }
+      .line-magenta { color: #c084fc; margin: 10px 0 4px; }
+      .line-dim { color: #8a8a94; }
+      .line-check { color: #22c55e; }
+      .session {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px dashed #27272a;
+      }
+      .session-head {
+        color: #60a5fa;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      .session-summary {
+        color: #a1a1aa;
+        margin-bottom: 10px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'Noto Sans', Roboto, sans-serif;
+        font-size: 13.5px;
+        line-height: 1.55;
+      }
+      .session-summary code {
+        font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Liberation Mono', 'Consolas', monospace;
+        background: rgba(250, 250, 250, 0.05);
+        padding: 0 4px;
+        border-radius: 4px;
+        font-size: 12.5px;
+      }
+      .section-label {
+        color: #facc15;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin: 0 0 6px;
+      }
+      .bullet {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'Noto Sans', Roboto, sans-serif;
+        font-size: 14px;
+        line-height: 1.55;
+        color: #fafafa;
+      }
+      .bullet::before { content: "• "; color: #8a8a94; }
+      .reason {
+        display: block;
+        margin-left: 14px;
+        color: #8a8a94;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="terminal">
+      <div class="terminal-header">
+        <div class="dots">
+          <span class="dot dot-red"></span>
+          <span class="dot dot-yellow"></span>
+          <span class="dot dot-green"></span>
+        </div>
+        <span class="terminal-title">rwd today</span>
+      </div>
+      <div class="terminal-body">
+        <div class="banner">
+          <pre>  ██████  ██     ██ ██████
+  ██   ██ ██     ██ ██   ██
+  ██████  ██  █  ██ ██   ██
+  ██   ██ ██ ███ ██ ██   ██
+  ██   ██  ███ ███  ██████</pre>
+          <span class="banner-meta">rewind your day &nbsp;v0.13.15</span>
+        </div>
+
+        <div class="summary">
+          <div class="summary-head">2026-04-18</div>
+          <div class="summary-row">
+            <div class="agent agent-claude">Claude Code</div>
+            <div class="meta-row">
+              <span>10:24 ~ 15:07</span>
+              <span>Sessions: 6</span>
+              <span>in 61,891,779</span>
+              <span>out 673,146</span>
+            </div>
+          </div>
+          <div class="summary-row">
+            <div class="agent agent-codex">Codex</div>
+            <div class="meta-row">
+              <span>10:13 ~ 10:52</span>
+              <span>Sessions: 1</span>
+            </div>
+          </div>
+        </div>
+
+        <span class="line line-magenta">Analyzing insights via Codex...</span>
+        <span class="line line-dim">&#10003; Analyzing 6 sessions (est. 45,382 tokens)</span>
+        <span class="line line-check">&#10003; [1/6] Done &nbsp; &#10003; [2/6] Done &nbsp; &#10003; [3/6] Done &nbsp; &#10003; [4/6] Done &nbsp; &#10003; [5/6] Done &nbsp; &#10003; [6/6] Done</span>
+
+        <div class="session">
+          <div class="session-head">&#9656; Session: 6e70ea19</div>
+          <p class="session-summary">Migrated the status bar context indicator from percent to raw tokens, then fixed values getting stuck at <code>[1 / 1.0M]</code> by including cache tokens in the total.</p>
+          <div class="section-label">Key Decisions</div>
+          <div class="bullet">Show context usage as raw tokens instead of a percentage.<span class="reason">&rarr; wanted a precise number, not an approximate ratio.</span></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
