@@ -500,10 +500,6 @@ fn has_stored_api_key(api_key: &str) -> bool {
     !api_key.trim().is_empty()
 }
 
-fn provider_api_key<'a>(llm: &'a LlmConfig, provider: &str) -> &'a str {
-    llm.api_key_for_provider(provider)
-}
-
 fn print_provider_switch_guidance(old_provider: &str, new_provider: &str, llm: &LlmConfig) {
     if old_provider == new_provider {
         return;
@@ -527,7 +523,7 @@ fn print_provider_switch_guidance(old_provider: &str, new_provider: &str, llm: &
             ))
         );
     } else if provider_uses_api_key(new_provider)
-        && !has_stored_api_key(provider_api_key(llm, new_provider))
+        && !has_stored_api_key(llm.api_key_for_provider(new_provider))
     {
         eprintln!(
             "{}",
@@ -630,7 +626,7 @@ pub async fn run_auth_status() -> Result<(), ConfigError> {
         };
         println!("{}", crate::messages::auth::codex_login_status(state));
     } else {
-        let has_active_key = has_stored_api_key(provider_api_key(&config.llm, provider));
+        let has_active_key = has_stored_api_key(config.llm.api_key_for_provider(provider));
         if !has_active_key {
             let hint = if provider == "openai" {
                 "set with `rwd config api-key <key>` or `rwd config openai-api-key <key>`"
@@ -702,10 +698,16 @@ pub fn run_reset(yes: bool, dry_run: bool) -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// Reads a password with Esc support. Esc returns None (cancel), Enter returns the input.
-/// Reads a visible text input with Esc-to-cancel support.
-/// Returns `None` if user presses Escape, `Some(default)` if Enter on empty input.
-fn read_input_with_esc(prompt: &str, default: &str) -> Result<Option<String>, ConfigError> {
+/// Reads a line of terminal input with Esc-to-cancel support.
+///
+/// Esc returns `None` (cancel), Enter returns the typed input. When `mask` is
+/// set, typed characters echo as `*` (password mode). When a `default` is
+/// given, Enter on empty input returns it.
+fn read_line_with_esc(
+    prompt: &str,
+    default: Option<&str>,
+    mask: bool,
+) -> Result<Option<String>, ConfigError> {
     use console::{Key, Term};
     let term = Term::stderr();
     eprint!("{prompt}");
@@ -718,10 +720,9 @@ fn read_input_with_esc(prompt: &str, default: &str) -> Result<Option<String>, Co
             }
             Key::Enter => {
                 term.write_line("")?;
-                let value = if input.is_empty() {
-                    default.to_string()
-                } else {
-                    input
+                let value = match default {
+                    Some(default) if input.is_empty() => default.to_string(),
+                    _ => input,
                 };
                 return Ok(Some(value));
             }
@@ -730,6 +731,10 @@ fn read_input_with_esc(prompt: &str, default: &str) -> Result<Option<String>, Co
                     input.pop();
                     term.clear_chars(1)?;
                 }
+            }
+            Key::Char(c) if mask => {
+                input.push(c);
+                eprint!("*");
             }
             Key::Char(c) if !c.is_ascii_control() => {
                 input.push(c);
@@ -740,34 +745,12 @@ fn read_input_with_esc(prompt: &str, default: &str) -> Result<Option<String>, Co
     }
 }
 
+fn read_input_with_esc(prompt: &str, default: &str) -> Result<Option<String>, ConfigError> {
+    read_line_with_esc(prompt, Some(default), false)
+}
+
 fn read_password_with_esc(prompt: &str) -> Result<Option<String>, ConfigError> {
-    use console::{Key, Term};
-    let term = Term::stderr();
-    eprint!("{prompt}");
-    let mut input = String::new();
-    loop {
-        match term.read_key()? {
-            Key::Escape => {
-                term.write_line("")?;
-                return Ok(None);
-            }
-            Key::Enter => {
-                term.write_line("")?;
-                return Ok(Some(input));
-            }
-            Key::Backspace => {
-                if !input.is_empty() {
-                    input.pop();
-                    term.clear_chars(1)?;
-                }
-            }
-            Key::Char(c) => {
-                input.push(c);
-                eprint!("*");
-            }
-            _ => {}
-        }
-    }
+    read_line_with_esc(prompt, None, true)
 }
 
 /// Verifies provider credentials.
@@ -876,6 +859,51 @@ fn mask_api_key(key: &str) -> String {
     } else {
         "***".to_string()
     }
+}
+
+/// Interactive flow for changing a provider API key: prompt, confirm, save, verify.
+/// Returns without changes when the user cancels at any step.
+async fn prompt_provider_api_key(
+    config: &mut Config,
+    config_file: &std::path::Path,
+    theme: &ColorfulTheme,
+    provider: &str,
+    provider_label: &str,
+) -> Result<(), ConfigError> {
+    let green = "\x1b[32m";
+    let reset = "\x1b[0m";
+
+    let key_prompt = crate::messages::config::new_provider_api_key(provider_label);
+    let Some(new_key) = read_password_with_esc(&key_prompt)? else {
+        return Ok(());
+    };
+    let new_key = new_key.trim().to_string();
+
+    if new_key.is_empty() {
+        return Ok(());
+    }
+    let confirmed = Confirm::with_theme(theme)
+        .with_prompt(crate::messages::config::confirm_provider_api_key(
+            provider_label,
+        ))
+        .default(false)
+        .interact_opt()?;
+    if confirmed != Some(true) {
+        return Ok(());
+    }
+    let old_masked = mask_api_key(config.llm.api_key_for_provider(provider));
+    config.llm.set_api_key_for_provider(provider, new_key);
+    save_config(config, config_file)?;
+    eprintln!(
+        "{green}{}{reset}",
+        crate::messages::config::changed(
+            &old_masked,
+            &mask_api_key(config.llm.api_key_for_provider(provider))
+        )
+    );
+    verify_api_key(provider, config.llm.api_key_for_provider(provider)).await;
+    eprintln!();
+    Ok(())
 }
 
 /// `rwd config` (no args) — interactive menu for changing settings.
@@ -1001,7 +1029,7 @@ pub async fn run_config_interactive() -> Result<(), ConfigError> {
                     print_provider_switch_guidance(&old, new_provider, &config.llm);
                     verify_api_key(
                         &config.llm.provider,
-                        provider_api_key(&config.llm, &config.llm.provider),
+                        config.llm.api_key_for_provider(&config.llm.provider),
                     )
                     .await;
                     eprintln!();
@@ -1009,67 +1037,19 @@ pub async fn run_config_interactive() -> Result<(), ConfigError> {
             }
             // openai-api-key
             1 => {
-                let key_prompt = crate::messages::config::new_provider_api_key("OpenAI");
-                let Some(new_key) = read_password_with_esc(&key_prompt)? else {
-                    continue;
-                };
-                let new_key = new_key.trim().to_string();
-
-                if new_key.is_empty() {
-                    continue;
-                }
-                let confirmed = Confirm::with_theme(&theme)
-                    .with_prompt(crate::messages::config::confirm_provider_api_key("OpenAI"))
-                    .default(false)
-                    .interact_opt()?;
-                if confirmed != Some(true) {
-                    continue;
-                }
-                let old_masked = mask_api_key(&config.llm.openai_api_key);
-                config.llm.openai_api_key = new_key;
-                save_config(&config, &config_file)?;
-                eprintln!(
-                    "{green}{}{reset}",
-                    crate::messages::config::changed(
-                        &old_masked,
-                        &mask_api_key(&config.llm.openai_api_key)
-                    )
-                );
-                verify_api_key("openai", &config.llm.openai_api_key).await;
-                eprintln!();
+                prompt_provider_api_key(&mut config, &config_file, &theme, "openai", "OpenAI")
+                    .await?;
             }
             // anthropic-api-key
             2 => {
-                let key_prompt = crate::messages::config::new_provider_api_key("Anthropic");
-                let Some(new_key) = read_password_with_esc(&key_prompt)? else {
-                    continue;
-                };
-                let new_key = new_key.trim().to_string();
-
-                if new_key.is_empty() {
-                    continue;
-                }
-                let confirmed = Confirm::with_theme(&theme)
-                    .with_prompt(crate::messages::config::confirm_provider_api_key(
-                        "Anthropic",
-                    ))
-                    .default(false)
-                    .interact_opt()?;
-                if confirmed != Some(true) {
-                    continue;
-                }
-                let old_masked = mask_api_key(&config.llm.anthropic_api_key);
-                config.llm.anthropic_api_key = new_key;
-                save_config(&config, &config_file)?;
-                eprintln!(
-                    "{green}{}{reset}",
-                    crate::messages::config::changed(
-                        &old_masked,
-                        &mask_api_key(&config.llm.anthropic_api_key)
-                    )
-                );
-                verify_api_key("anthropic", &config.llm.anthropic_api_key).await;
-                eprintln!();
+                prompt_provider_api_key(
+                    &mut config,
+                    &config_file,
+                    &theme,
+                    "anthropic",
+                    "Anthropic",
+                )
+                .await?;
             }
             // codex-model
             3 => {

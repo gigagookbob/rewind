@@ -67,7 +67,9 @@ impl LlmProvider {
     /// None means no explicit character cap is enforced here.
     pub fn max_conversation_chars(&self, lang: &Lang) -> Option<usize> {
         match self {
-            LlmProvider::Codex { .. } => Some(codex_max_conversation_chars(get_system_prompt(lang))),
+            LlmProvider::Codex { .. } => {
+                Some(codex_max_conversation_chars(get_system_prompt(lang)))
+            }
             _ => None,
         }
     }
@@ -80,8 +82,9 @@ impl LlmProvider {
         }
     }
 
-    /// Calls the provider's API with the system prompt selected by language.
-    pub async fn call_api(
+    /// Calls the insight-extraction API with the system prompt selected by language.
+    /// Codex enforces the structured JSON output schema on this path.
+    pub async fn call_analysis_api(
         &self,
         api_key: &str,
         conversation_text: &str,
@@ -120,29 +123,8 @@ impl LlmProvider {
         session_summaries: &str,
         lang: &Lang,
     ) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
-        let prompt = get_summary_prompt(lang);
-        match self {
-            LlmProvider::Anthropic => {
-                super::anthropic::call_anthropic_api(api_key, prompt, session_summaries, 16384)
-                    .await
-            }
-            LlmProvider::OpenAi => {
-                super::openai::call_openai_api(api_key, prompt, session_summaries, 16384).await
-            }
-            LlmProvider::Codex {
-                model,
-                reasoning_effort,
-            } => {
-                super::codex_exec::call_codex_text_api(
-                    prompt,
-                    session_summaries,
-                    16_384,
-                    model,
-                    reasoning_effort,
-                )
-                .await
-            }
-        }
+        self.call_text_api(api_key, get_summary_prompt(lang), session_summaries, 16_384)
+            .await
     }
 
     /// Calls the Slack message API with language-selected prompt.
@@ -152,32 +134,13 @@ impl LlmProvider {
         session_summaries: &str,
         lang: &Lang,
     ) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
-        let prompt = get_slack_prompt(lang);
-        match self {
-            LlmProvider::Anthropic => {
-                super::anthropic::call_anthropic_api(api_key, prompt, session_summaries, 4096).await
-            }
-            LlmProvider::OpenAi => {
-                super::openai::call_openai_api(api_key, prompt, session_summaries, 4096).await
-            }
-            LlmProvider::Codex {
-                model,
-                reasoning_effort,
-            } => {
-                super::codex_exec::call_codex_text_api(
-                    prompt,
-                    session_summaries,
-                    4_096,
-                    model,
-                    reasoning_effort,
-                )
-                .await
-            }
-        }
+        self.call_text_api(api_key, get_slack_prompt(lang), session_summaries, 4_096)
+            .await
     }
 
-    /// API call with explicit max_tokens (used for chunk summarization).
-    pub async fn call_api_with_max_tokens(
+    /// Calls the API with an arbitrary system prompt for plain-text output
+    /// (summary, Slack message, chunk summarization).
+    pub async fn call_text_api(
         &self,
         api_key: &str,
         system_prompt: &str,
@@ -186,7 +149,7 @@ impl LlmProvider {
     ) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
         match self {
             LlmProvider::Anthropic => {
-                super::anthropic::call_anthropic_api_with_max_tokens(
+                super::anthropic::call_anthropic_api(
                     api_key,
                     system_prompt,
                     conversation_text,
@@ -195,7 +158,7 @@ impl LlmProvider {
                 .await
             }
             LlmProvider::OpenAi => {
-                super::openai::call_openai_api_with_max_tokens(
+                super::openai::call_openai_api(
                     api_key,
                     system_prompt,
                     conversation_text,
