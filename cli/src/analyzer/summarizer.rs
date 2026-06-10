@@ -144,7 +144,7 @@ pub async fn summarize_chunks(
         let sp = super::start_spinner(crate::messages::status::chunk_summarizing(i + 1, total));
 
         let (summary, _usage) = provider
-            .call_api_with_max_tokens(api_key, get_chunk_summarize_prompt(lang), &chunk_text, 2000)
+            .call_text_api(api_key, get_chunk_summarize_prompt(lang), &chunk_text, 2000)
             .await?;
         super::stop_spinner(sp);
         eprintln!("{}", crate::messages::status::chunk_done(i + 1, total));
@@ -230,5 +230,4 @@ mod tests {
         let wait = calculate_wait(100, &limits);
         assert!((wait - 1.2).abs() < 0.1);
     }
-
 }

@@ -117,61 +117,6 @@ pub async fn call_openai_api(
     Ok((text.message.content.clone(), usage))
 }
 
-/// API call variant with explicit max_tokens.
-pub async fn call_openai_api_with_max_tokens(
-    api_key: &str,
-    system_prompt: &str,
-    conversation_text: &str,
-    max_tokens: u32,
-) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
-    let client = reqwest::Client::new();
-    let request_body = ChatRequest {
-        model: MODEL.to_string(),
-        messages: vec![
-            ChatMessage {
-                role: "system".to_string(),
-                content: system_prompt.to_string(),
-            },
-            ChatMessage {
-                role: "user".to_string(),
-                content: conversation_text.to_string(),
-            },
-        ],
-        max_tokens,
-        response_format: ResponseFormat {
-            format_type: "json_object".to_string(),
-        },
-    };
-    let response = client
-        .post(API_URL)
-        .header("Authorization", format!("Bearer {api_key}"))
-        .header("Content-Type", "application/json")
-        .json(&request_body)
-        .send()
-        .await?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let error_body = response.text().await.unwrap_or_default();
-        return Err(crate::messages::error::openai_api_request_failed(&status, &error_body).into());
-    }
-    let chat_response: ChatResponse = response.json().await?;
-
-    let usage = chat_response
-        .usage
-        .map(|u| super::ApiUsage {
-            input_tokens: u.prompt_tokens,
-            output_tokens: u.completion_tokens,
-        })
-        .unwrap_or_default();
-
-    let text = chat_response
-        .choices
-        .first()
-        .ok_or(crate::messages::error::OPENAI_EMPTY_CHOICES)?;
-    Ok((text.message.content.clone(), usage))
-}
-
 /// Minimal request body for probing (no response_format needed).
 #[derive(Serialize)]
 struct ProbeRequest {

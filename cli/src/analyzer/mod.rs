@@ -554,7 +554,16 @@ async fn run_planned_task(
 ) -> Result<PlannedSessionOutcome, AnalyzerError> {
     let started = std::time::Instant::now();
 
-    let initial = execute_task(&planned, provider, api_key, limits, redactor_enabled, lang).await;
+    let initial = execute_task(
+        &planned,
+        provider,
+        api_key,
+        limits,
+        redactor_enabled,
+        lang,
+        false,
+    )
+    .await;
 
     let (analysis, redact, usage) = match initial {
         Ok(result) => result,
@@ -569,14 +578,22 @@ async fn run_planned_task(
                         &planned.task.session_id,
                     )
                 );
-                execute_task(&planned, provider, api_key, limits, redactor_enabled, lang)
-                    .await
-                    .map_err(|retry_err| {
-                        format!(
-                            "Session {} failed after 429 retry: {}",
-                            planned.task.session_id, retry_err
-                        )
-                    })?
+                execute_task(
+                    &planned,
+                    provider,
+                    api_key,
+                    limits,
+                    redactor_enabled,
+                    lang,
+                    false,
+                )
+                .await
+                .map_err(|retry_err| {
+                    format!(
+                        "Session {} failed after 429 retry: {}",
+                        planned.task.session_id, retry_err
+                    )
+                })?
             }
             RetryAction::JsonParse => {
                 eprintln!(
@@ -587,13 +604,14 @@ async fn run_planned_task(
                         &planned.task.session_id,
                     )
                 );
-                execute_task_with_json_hint(
+                execute_task(
                     &planned,
                     provider,
                     api_key,
                     limits,
                     redactor_enabled,
                     lang,
+                    true,
                 )
                 .await
                 .map_err(|retry_err| {
@@ -619,105 +637,6 @@ async fn run_planned_task(
     })
 }
 
-async fn execute_task(
-    planned: &PlannedSessionTask,
-    provider: &provider::LlmProvider,
-    api_key: &str,
-    limits: &planner::RateLimits,
-    redactor_enabled: bool,
-    lang: &crate::config::Lang,
-) -> Result<(AnalysisResult, RedactResult, ApiUsage), AnalyzerError> {
-    match planned.strategy {
-        StepStrategy::Direct => {
-            if should_force_summarize_by_chars(provider, lang, &planned.task.prompt_text, 0) {
-                execute_summarize_step(
-                    &planned.task.messages,
-                    &planned.task.session_id,
-                    provider,
-                    api_key,
-                    limits,
-                    redactor_enabled,
-                    lang,
-                )
-                .await
-            } else {
-                execute_direct_step(
-                    &planned.task.prompt_text,
-                    provider,
-                    api_key,
-                    redactor_enabled,
-                    lang,
-                )
-                .await
-            }
-        }
-        StepStrategy::Summarize { .. } => {
-            execute_summarize_step(
-                &planned.task.messages,
-                &planned.task.session_id,
-                provider,
-                api_key,
-                limits,
-                redactor_enabled,
-                lang,
-            )
-            .await
-        }
-    }
-}
-
-async fn execute_task_with_json_hint(
-    planned: &PlannedSessionTask,
-    provider: &provider::LlmProvider,
-    api_key: &str,
-    limits: &planner::RateLimits,
-    redactor_enabled: bool,
-    lang: &crate::config::Lang,
-) -> Result<(AnalysisResult, RedactResult, ApiUsage), AnalyzerError> {
-    match planned.strategy {
-        StepStrategy::Direct => {
-            if should_force_summarize_by_chars(
-                provider,
-                lang,
-                &planned.task.prompt_text,
-                JSON_RETRY_PREFIX.chars().count(),
-            ) {
-                execute_summarize_step_with_json_hint(
-                    &planned.task.messages,
-                    &planned.task.session_id,
-                    provider,
-                    api_key,
-                    limits,
-                    redactor_enabled,
-                    lang,
-                )
-                .await
-            } else {
-                execute_direct_step_with_json_hint(
-                    &planned.task.prompt_text,
-                    provider,
-                    api_key,
-                    redactor_enabled,
-                    lang,
-                )
-                .await
-            }
-        }
-        StepStrategy::Summarize { .. } => {
-            execute_summarize_step_with_json_hint(
-                &planned.task.messages,
-                &planned.task.session_id,
-                provider,
-                api_key,
-                limits,
-                redactor_enabled,
-                lang,
-            )
-            .await
-        }
-    }
-}
-
 /// Instruction prepended to the conversation on JSON-parse retry.
 /// Tells the LLM to only return JSON and not execute the conversation.
 const JSON_RETRY_PREFIX: &str = "\
@@ -732,66 +651,71 @@ fn should_force_summarize_by_chars(
     conversation_text: &str,
     extra_chars: usize,
 ) -> bool {
-    provider.max_conversation_chars(lang).is_some_and(|max_chars| {
-        conversation_text
-            .chars()
-            .count()
-            .saturating_add(extra_chars)
-            > max_chars
-    })
+    provider
+        .max_conversation_chars(lang)
+        .is_some_and(|max_chars| {
+            conversation_text
+                .chars()
+                .count()
+                .saturating_add(extra_chars)
+                > max_chars
+        })
 }
 
-/// Direct step: sends the session prompt as-is.
-async fn execute_direct_step(
-    prompt_text: &str,
-    provider: &provider::LlmProvider,
-    api_key: &str,
-    redactor_enabled: bool,
-    lang: &crate::config::Lang,
-) -> Result<(AnalysisResult, RedactResult, ApiUsage), AnalyzerError> {
-    let (final_prompt, redact_result) = if redactor_enabled {
-        crate::redactor::redact_text(prompt_text)
-    } else {
-        (prompt_text.to_string(), RedactResult::empty())
-    };
-    let (raw_response, usage) = provider
-        .call_api(api_key, &final_prompt, 4_096, lang)
-        .await?;
-    let result = insight::parse_response(&raw_response)?;
-    Ok((result, redact_result, usage))
-}
-
-/// Direct step variant for JSON-parse retry: prepends a stronger instruction.
-async fn execute_direct_step_with_json_hint(
-    prompt_text: &str,
-    provider: &provider::LlmProvider,
-    api_key: &str,
-    redactor_enabled: bool,
-    lang: &crate::config::Lang,
-) -> Result<(AnalysisResult, RedactResult, ApiUsage), AnalyzerError> {
-    let hinted = format!("{JSON_RETRY_PREFIX}{prompt_text}");
-    let (final_prompt, redact_result) = if redactor_enabled {
-        crate::redactor::redact_text(&hinted)
-    } else {
-        (hinted, RedactResult::empty())
-    };
-    let (raw_response, usage) = provider
-        .call_api(api_key, &final_prompt, 4_096, lang)
-        .await?;
-    let result = insight::parse_response(&raw_response)?;
-    Ok((result, redact_result, usage))
-}
-
-/// Summarize step: splits a large session into chunks, summarizes, then analyzes.
-async fn execute_summarize_step(
-    messages: &[(String, String)],
-    session_id: &str,
+/// Executes one planned session step.
+///
+/// Direct steps send the session prompt as-is; Summarize steps (and Direct
+/// steps that exceed the provider's character cap) chunk-summarize first.
+/// `json_hint` prepends a stronger JSON-only instruction on parse retries.
+async fn execute_task(
+    planned: &PlannedSessionTask,
     provider: &provider::LlmProvider,
     api_key: &str,
     limits: &planner::RateLimits,
     redactor_enabled: bool,
     lang: &crate::config::Lang,
+    json_hint: bool,
 ) -> Result<(AnalysisResult, RedactResult, ApiUsage), AnalyzerError> {
+    let prefix = if json_hint { JSON_RETRY_PREFIX } else { "" };
+
+    let summarize = match planned.strategy {
+        StepStrategy::Direct => should_force_summarize_by_chars(
+            provider,
+            lang,
+            &planned.task.prompt_text,
+            prefix.chars().count(),
+        ),
+        StepStrategy::Summarize { .. } => true,
+    };
+
+    let prompt = if summarize {
+        let session_id = &planned.task.session_id;
+        let summary_text = summarize_session_messages(
+            &planned.task.messages,
+            session_id,
+            provider,
+            api_key,
+            limits,
+            lang,
+        )
+        .await?;
+        format!("{prefix}[Session: {session_id}]\n{summary_text}")
+    } else {
+        format!("{prefix}{}", planned.task.prompt_text)
+    };
+
+    analyze_prompt(prompt, provider, api_key, redactor_enabled, lang).await
+}
+
+/// Splits a large session into chunks and returns the combined chunk summaries.
+async fn summarize_session_messages(
+    messages: &[(String, String)],
+    session_id: &str,
+    provider: &provider::LlmProvider,
+    api_key: &str,
+    limits: &planner::RateLimits,
+    lang: &crate::config::Lang,
+) -> Result<String, AnalyzerError> {
     if messages.is_empty() {
         return Err(format!("No conversation messages in session {session_id}").into());
     }
@@ -805,56 +729,24 @@ async fn execute_summarize_step(
         limits.input_tokens_per_minute.max(1),
         max_chunk_chars,
     );
-    let summary_text =
-        summarizer::summarize_chunks(&chunks, provider, api_key, limits, lang).await?;
-
-    let prompt_with_session = format!("[Session: {session_id}]\n{summary_text}");
-    let (final_prompt, redact_result) = if redactor_enabled {
-        crate::redactor::redact_text(&prompt_with_session)
-    } else {
-        (prompt_with_session, RedactResult::empty())
-    };
-    let (raw_response, usage) = provider
-        .call_api(api_key, &final_prompt, 4_096, lang)
-        .await?;
-    let result = insight::parse_response(&raw_response)?;
-    Ok((result, redact_result, usage))
+    summarizer::summarize_chunks(&chunks, provider, api_key, limits, lang).await
 }
 
-/// Summarize step variant for JSON-parse retry: prepends a stronger instruction.
-async fn execute_summarize_step_with_json_hint(
-    messages: &[(String, String)],
-    session_id: &str,
+/// Redacts the prompt (when enabled), calls the analysis API, and parses insights.
+async fn analyze_prompt(
+    prompt: String,
     provider: &provider::LlmProvider,
     api_key: &str,
-    limits: &planner::RateLimits,
     redactor_enabled: bool,
     lang: &crate::config::Lang,
 ) -> Result<(AnalysisResult, RedactResult, ApiUsage), AnalyzerError> {
-    if messages.is_empty() {
-        return Err(format!("No conversation messages in session {session_id}").into());
-    }
-
-    let chunk_prompt = summarizer::get_chunk_summarize_prompt(lang);
-    let max_chunk_chars = provider
-        .max_conversation_chars_with_prompt(chunk_prompt)
-        .unwrap_or(usize::MAX);
-    let chunks = summarizer::split_into_chunks(
-        messages,
-        limits.input_tokens_per_minute.max(1),
-        max_chunk_chars,
-    );
-    let summary_text =
-        summarizer::summarize_chunks(&chunks, provider, api_key, limits, lang).await?;
-
-    let prompt_with_session = format!("{JSON_RETRY_PREFIX}[Session: {session_id}]\n{summary_text}");
     let (final_prompt, redact_result) = if redactor_enabled {
-        crate::redactor::redact_text(&prompt_with_session)
+        crate::redactor::redact_text(&prompt)
     } else {
-        (prompt_with_session, RedactResult::empty())
+        (prompt, RedactResult::empty())
     };
     let (raw_response, usage) = provider
-        .call_api(api_key, &final_prompt, 4_096, lang)
+        .call_analysis_api(api_key, &final_prompt, 4_096, lang)
         .await?;
     let result = insight::parse_response(&raw_response)?;
     Ok((result, redact_result, usage))

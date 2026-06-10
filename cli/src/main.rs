@@ -607,55 +607,47 @@ async fn run_today(
     Ok(())
 }
 
-/// Generates a development progress summary for today.
-///
-/// 1. Loads today's cache (runs `run_today()` first if missing).
-/// 2. Collects work_summary from all sessions and sends to LLM.
-/// 3. Prints summary to terminal, appends to daily Markdown, copies to clipboard.
-async fn run_summary(
-    _lang_flag: Option<String>,
-    target_date: chrono::NaiveDate,
-    no_cache: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let today = target_date;
-
-    if no_cache {
-        run_today(false, None, today, true, false).await?;
-    }
-
-    let mut cached = match cache::load_cache(today) {
+/// Loads today's analysis cache, running the full analysis first when the
+/// cache is missing or stale for the current timezone rules.
+async fn load_cache_or_analyze(
+    today: chrono::NaiveDate,
+) -> Result<cache::TodayCache, Box<dyn std::error::Error>> {
+    let cached = match cache::load_cache(today) {
         Some(c) => c,
         None => {
             println!("{}", crate::messages::error::NO_CACHE);
             run_today(false, None, today, false, false).await?;
-            match cache::load_cache(today) {
-                Some(c) => c,
-                None => {
-                    eprintln!("{}", crate::messages::error::NO_CACHE_AFTER_ANALYSIS);
-                    std::process::exit(1);
-                }
-            }
+            reload_cache_after_analysis(today)
         }
     };
 
-    if !cache::is_timezone_compatible(&cached, today) {
-        eprintln!(
-            "{YELLOW}{}{RESET}",
-            crate::messages::status::CACHE_STALE_TIMEZONE
-        );
-        eprintln!("{}", crate::messages::status::CACHE_STALE_HINT);
-        eprintln!();
-        run_today(false, None, today, false, false).await?;
-        cached = match cache::load_cache(today) {
-            Some(c) => c,
-            None => {
-                eprintln!("{}", crate::messages::error::NO_CACHE_AFTER_ANALYSIS);
-                std::process::exit(1);
-            }
-        };
+    if cache::is_timezone_compatible(&cached, today) {
+        return Ok(cached);
     }
 
-    // Concatenate all session work_summaries with source names for project-level grouping.
+    eprintln!(
+        "{YELLOW}{}{RESET}",
+        crate::messages::status::CACHE_STALE_TIMEZONE
+    );
+    eprintln!("{}", crate::messages::status::CACHE_STALE_HINT);
+    eprintln!();
+    run_today(false, None, today, false, false).await?;
+    Ok(reload_cache_after_analysis(today))
+}
+
+/// Reloads the cache written by `run_today`. Exits when analysis produced none.
+fn reload_cache_after_analysis(today: chrono::NaiveDate) -> cache::TodayCache {
+    match cache::load_cache(today) {
+        Some(c) => c,
+        None => {
+            eprintln!("{}", crate::messages::error::NO_CACHE_AFTER_ANALYSIS);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Concatenates all session work_summaries with source names for project-level grouping.
+fn collect_work_summaries(cached: &cache::TodayCache) -> String {
     let mut summaries_text = String::new();
     for (source_name, analysis) in &cached.sources {
         for session in &analysis.sessions {
@@ -665,7 +657,28 @@ async fn run_summary(
             ));
         }
     }
+    summaries_text
+}
 
+/// Generates a development progress summary for today.
+///
+/// 1. Loads today's cache (runs `run_today()` first if missing).
+/// 2. Collects work_summary from all sessions and sends to LLM.
+/// 3. Prints summary to terminal, appends to daily Markdown, copies to clipboard.
+async fn run_summary(
+    lang_flag: Option<String>,
+    target_date: chrono::NaiveDate,
+    no_cache: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let today = target_date;
+
+    if no_cache {
+        run_today(false, None, today, true, false).await?;
+    }
+
+    let cached = load_cache_or_analyze(today).await?;
+
+    let summaries_text = collect_work_summaries(&cached);
     if summaries_text.is_empty() {
         println!("{}", crate::messages::error::NO_SESSIONS);
         return Ok(());
@@ -673,7 +686,7 @@ async fn run_summary(
 
     println!("{}", crate::messages::status::SUMMARY_GENERATING);
     let mut loaded_config = config::load_config_if_exists();
-    let lang = resolve_lang(&_lang_flag, &mut loaded_config).unwrap_or(config::Lang::En);
+    let lang = resolve_lang(&lang_flag, &mut loaded_config).unwrap_or(config::Lang::En);
     let summary = analyzer::analyze_summary(&summaries_text, &lang).await?;
 
     println!("\n{}", crate::messages::status::SUMMARY_HEADER);
@@ -693,7 +706,7 @@ async fn run_summary(
 /// Similar to `run_summary()` but uses SLACK_PROMPT for Slack-friendly formatting.
 /// Only outputs to terminal and copies to clipboard (no Obsidian save).
 async fn run_slack(
-    _lang_flag: Option<String>,
+    lang_flag: Option<String>,
     target_date: chrono::NaiveDate,
     no_cache: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -703,37 +716,7 @@ async fn run_slack(
         run_today(false, None, today, true, false).await?;
     }
 
-    let mut cached = match cache::load_cache(today) {
-        Some(c) => c,
-        None => {
-            println!("{}", crate::messages::error::NO_CACHE);
-            run_today(false, None, today, false, false).await?;
-            match cache::load_cache(today) {
-                Some(c) => c,
-                None => {
-                    eprintln!("{}", crate::messages::error::NO_CACHE_AFTER_ANALYSIS);
-                    std::process::exit(1);
-                }
-            }
-        }
-    };
-
-    if !cache::is_timezone_compatible(&cached, today) {
-        eprintln!(
-            "{YELLOW}{}{RESET}",
-            crate::messages::status::CACHE_STALE_TIMEZONE
-        );
-        eprintln!("{}", crate::messages::status::CACHE_STALE_HINT);
-        eprintln!();
-        run_today(false, None, today, false, false).await?;
-        cached = match cache::load_cache(today) {
-            Some(c) => c,
-            None => {
-                eprintln!("{}", crate::messages::error::NO_CACHE_AFTER_ANALYSIS);
-                std::process::exit(1);
-            }
-        };
-    }
+    let cached = load_cache_or_analyze(today).await?;
 
     // Warn if cache is stale (entry count mismatch).
     let mut loaded_config = config::load_config_if_exists();
@@ -760,24 +743,14 @@ async fn run_slack(
         eprintln!();
     }
 
-    // Collect all session work_summaries.
-    let mut summaries_text = String::new();
-    for (source_name, analysis) in &cached.sources {
-        for session in &analysis.sessions {
-            summaries_text.push_str(&format!(
-                "[{source_name} / {}] {}\n",
-                session.session_id, session.work_summary
-            ));
-        }
-    }
-
+    let summaries_text = collect_work_summaries(&cached);
     if summaries_text.is_empty() {
         println!("{}", crate::messages::error::NO_SESSIONS);
         return Ok(());
     }
 
     println!("{}", crate::messages::status::SLACK_GENERATING);
-    let lang = resolve_lang(&_lang_flag, &mut loaded_config).unwrap_or(config::Lang::En);
+    let lang = resolve_lang(&lang_flag, &mut loaded_config).unwrap_or(config::Lang::En);
     let slack_message = analyzer::analyze_slack(&summaries_text, &lang).await?;
 
     println!("\n{slack_message}");
