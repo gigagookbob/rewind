@@ -12,7 +12,37 @@ struct ChatRequest {
     model: String,
     messages: Vec<ChatMessage>,
     max_tokens: u32,
-    response_format: ResponseFormat,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<ResponseFormat>,
+}
+
+impl ChatRequest {
+    fn new(
+        system_prompt: &str,
+        conversation_text: &str,
+        max_tokens: u32,
+        json_output: bool,
+    ) -> Self {
+        Self {
+            model: MODEL.to_string(),
+            messages: vec![
+                ChatMessage {
+                    role: "system".to_string(),
+                    content: system_prompt.to_string(),
+                },
+                ChatMessage {
+                    role: "user".to_string(),
+                    content: conversation_text.to_string(),
+                },
+            ],
+            max_tokens,
+            // Chunk summaries and share messages are plain text. JSON mode
+            // requires a JSON instruction and rejects their text-only prompts.
+            response_format: json_output.then(|| ResponseFormat {
+                format_type: "json_object".to_string(),
+            }),
+        }
+    }
 }
 
 /// Forces JSON output mode.
@@ -64,26 +94,11 @@ pub async fn call_openai_api(
     system_prompt: &str,
     conversation_text: &str,
     max_tokens: u32,
+    json_output: bool,
 ) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
     let client = reqwest::Client::new();
 
-    let request_body = ChatRequest {
-        model: MODEL.to_string(),
-        messages: vec![
-            ChatMessage {
-                role: "system".to_string(),
-                content: system_prompt.to_string(),
-            },
-            ChatMessage {
-                role: "user".to_string(),
-                content: conversation_text.to_string(),
-            },
-        ],
-        max_tokens,
-        response_format: ResponseFormat {
-            format_type: "json_object".to_string(),
-        },
-    };
+    let request_body = ChatRequest::new(system_prompt, conversation_text, max_tokens, json_output);
 
     let response = client
         .post(API_URL)
@@ -212,5 +227,19 @@ mod tests {
         let json = r#"{"choices": []}"#;
         let response: ChatResponse = serde_json::from_str(json).unwrap();
         assert!(response.choices.is_empty());
+    }
+    #[test]
+    fn test_text_request_omits_json_response_format() {
+        let request = ChatRequest::new("Summarize as plain text", "daily work", 128, false);
+        let value = serde_json::to_value(request).expect("serialized request");
+        assert!(value.get("response_format").is_none());
+        assert_eq!(value["messages"][1]["content"], "daily work");
+    }
+
+    #[test]
+    fn test_analysis_request_keeps_json_response_format() {
+        let request = ChatRequest::new("Return JSON", "daily work", 128, true);
+        let value = serde_json::to_value(request).expect("serialized request");
+        assert_eq!(value["response_format"]["type"], "json_object");
     }
 }

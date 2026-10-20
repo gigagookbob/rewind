@@ -98,7 +98,8 @@ impl LlmProvider {
                     .await
             }
             LlmProvider::OpenAi => {
-                super::openai::call_openai_api(api_key, prompt, conversation_text, max_tokens).await
+                super::openai::call_openai_api(api_key, prompt, conversation_text, max_tokens, true)
+                    .await
             }
             LlmProvider::Codex {
                 model,
@@ -163,6 +164,7 @@ impl LlmProvider {
                     system_prompt,
                     conversation_text,
                     max_tokens,
+                    false,
                 )
                 .await
             }
