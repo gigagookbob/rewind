@@ -82,7 +82,7 @@ rwd config provider codex                # Change LLM provider
 rwd config api-key sk-...                # Set API key for current provider (openai/anthropic)
 rwd config openai-api-key sk-...         # Set OpenAI API key directly
 rwd config anthropic-api-key sk-ant-...  # Set Anthropic API key directly
-rwd config codex-model gpt-5.4           # Override Codex model (default: gpt-5.4)
+rwd config codex-model default           # Use the model configured in Codex CLI
 rwd config codex-reasoning xhigh         # Override Codex reasoning (default: xhigh)
 rwd config claude-include-automated true # Include automated Claude sessions by default
 rwd config lang ko                       # Change output language (en/ko)
@@ -90,6 +90,23 @@ rwd auth status                          # Show provider auth method + credentia
 rwd reset --dry-run                      # Preview reset targets
 rwd reset --yes                          # Reset local config/cache state
 ```
+
+### API keys via environment variables
+
+`openai_api_key` and `anthropic_api_key` in `~/.config/rwd/config.toml`
+support `${VAR}` placeholders, expanded from the process environment at
+runtime. Use this to keep secrets out of the file (and out of backups
+like Time Machine / iCloud):
+
+```toml
+[llm]
+provider = "openai"
+openai_api_key = "${OPENAI_API_KEY}"
+```
+
+If the referenced variable is not set when `rwd` runs, the command fails
+with a clear error naming the missing variable. Literal keys (those
+without a `${...}` placeholder) keep working unchanged.
 
 ### Sensitive data masking
 
@@ -121,12 +138,21 @@ Update notice env toggles:
 
 Claude session filtering:
 - Default behavior excludes automated Claude sessions from `rwd today`.
+- Task-tool subagent (sidechain) entries are always excluded from counts and analysis.
 - Enable globally with:
 ```toml
 [input.claude]
 include_automated = true
 ```
 - Keep custom Claude roots in either legacy `[input] claude_roots = [...]` or new `[input.claude] roots = [...]`.
+
+Codex session filtering:
+- Default behavior excludes sessions with explicit subagent metadata in `session_meta`.
+- Hard signals are `source.subagent`, `agent_role`, and `agent_nickname`.
+- Worktree interactive sessions are still included by default.
+- `cwd` patterns and prompt heuristics are not used.
+
+Codex Desktop user `response_item` / `input_text` blocks are also supported. App-injected context is excluded, and legacy `event_msg` echoes are counted once.
 
 ## Release policy (maintainers)
 
