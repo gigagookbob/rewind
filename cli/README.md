@@ -157,8 +157,9 @@ Codex Desktop user `response_item` / `input_text` blocks are also supported. App
 ## Release policy (maintainers)
 
 - Release is triggered automatically on `main` push only when these files changed:
-  - `src/**`, `prompts/**`, `Cargo.toml`, `Cargo.lock`
-- Release tag is derived from `Cargo.toml` package version (`vX.Y.Z`).
+  - `cli/src/**`, `cli/prompts/**`, `cli/Cargo.toml`, `cli/Cargo.lock`
+  - `.github/workflows/release-on-main.yml`, `.github/workflows/release.yml`
+- Release tag is derived from `cli/Cargo.toml` package version (`vX.Y.Z`).
 - If the tag already exists, release is skipped.
 - Docs-only changes (for example `README.md`, `docs/**`) do not trigger release.
 - Release notes are published in two layers: a short custom summary for `rwd`, then GitHub's full categorized changelog.
