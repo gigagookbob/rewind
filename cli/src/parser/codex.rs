@@ -452,10 +452,16 @@ pub fn parse_codex_jsonl_file(path: &Path) -> Result<Vec<CodexEntry>, super::Par
         .filter_map(|(index, entry)| {
             if response_user_indices.contains(&index)
                 && let CodexEntry::UserMessage { timestamp, text } = &entry
-                && event_users.get(text.trim()).is_some_and(|times| {
-                    times
+                && event_users.get_mut(text.trim()).is_some_and(|times| {
+                    let matched = times
                         .iter()
-                        .any(|time| (*timestamp - *time).num_milliseconds().abs() <= 5_000)
+                        .position(|time| (*timestamp - *time).num_milliseconds().abs() <= 5_000);
+                    if let Some(index) = matched {
+                        times.swap_remove(index);
+                        true
+                    } else {
+                        false
+                    }
                 })
             {
                 None
@@ -1170,6 +1176,7 @@ mod tests {
         let lines = [
             r#"{"timestamp":"2026-10-20T09:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"계속해줘"}]}}"#,
             r#"{"timestamp":"2026-10-20T09:00:00.100Z","type":"event_msg","payload":{"type":"user_message","message":"계속해줘"}}"#,
+            r#"{"timestamp":"2026-10-20T09:00:02Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"계속해줘"}]}}"#,
             r#"{"timestamp":"2026-10-20T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"계속해줘"}]}}"#,
             r#"{"timestamp":"2026-10-20T09:02:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"다음 작업"}]}}"#,
         ];
@@ -1177,7 +1184,7 @@ mod tests {
         let entries = parse_codex_jsonl_file(&path).expect("parsed");
         std::fs::remove_file(path).expect("cleanup");
         let summary = summarize_codex_entries(&entries);
-        assert_eq!(summary.user_count, 3);
+        assert_eq!(summary.user_count, 4);
         assert!(entries.iter().any(
             |entry| matches!(entry, CodexEntry::UserMessage { text, .. } if text == "다음 작업")
         ));
