@@ -7,7 +7,7 @@
 
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
@@ -39,6 +39,9 @@ pub enum CodexEntry {
         session_id: String,
         cwd: String,
         model_provider: String,
+        subagent_source: Option<String>,
+        agent_role: Option<String>,
+        agent_nickname: Option<String>,
         text: String,
     },
     /// User input message
@@ -63,6 +66,13 @@ pub enum CodexEntry {
         entry_type: String,
         text: String,
     },
+}
+
+/// Classifies Codex sessions from explicit SessionMeta metadata only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexSessionKind {
+    Interactive,
+    Subagent,
 }
 
 fn collect_json_string_leaves(value: &serde_json::Value, out: &mut Vec<String>) {
@@ -107,6 +117,46 @@ fn extract_payload_text(payload: &serde_json::Value) -> String {
     join_unique_lines(&parts)
 }
 
+fn optional_non_empty_string(value: &serde_json::Value) -> Option<String> {
+    let text = value.as_str()?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    Some(text.to_string())
+}
+
+fn extract_subagent_source(payload: &serde_json::Value) -> Option<String> {
+    let source = payload.get("source")?.as_object()?;
+    let subagent = source.get("subagent")?;
+    match subagent {
+        serde_json::Value::String(_) => optional_non_empty_string(subagent),
+        // ThreadSpawn and Other carry nested metadata rather than a unit string.
+        serde_json::Value::Object(details) if !details.is_empty() => Some(subagent.to_string()),
+        _ => None,
+    }
+}
+
+/// Returns `Subagent` if any `SessionMeta` entry carries an explicit hard
+/// signal (`source.subagent`, `agent_role`, or `agent_nickname`); otherwise
+/// `Interactive`. Conservative by design: a single hard signal in any merged
+/// entry classifies the whole session as a subagent.
+pub fn classify_codex_session(entries: &[CodexEntry]) -> CodexSessionKind {
+    for entry in entries {
+        if let CodexEntry::SessionMeta {
+            subagent_source,
+            agent_role,
+            agent_nickname,
+            ..
+        } = entry
+            && (subagent_source.is_some() || agent_role.is_some() || agent_nickname.is_some())
+        {
+            return CodexSessionKind::Subagent;
+        }
+    }
+
+    CodexSessionKind::Interactive
+}
+
 impl CodexEntry {
     /// Converts a CodexRawEntry into a structured CodexEntry variant.
     /// Missing fields default to empty strings since the Codex JSONL schema
@@ -125,11 +175,21 @@ impl CodexEntry {
                     .as_str()
                     .unwrap_or_default()
                     .to_string();
+                let subagent_source = extract_subagent_source(payload);
+                let agent_role = payload
+                    .get("agent_role")
+                    .and_then(optional_non_empty_string);
+                let agent_nickname = payload
+                    .get("agent_nickname")
+                    .and_then(optional_non_empty_string);
                 CodexEntry::SessionMeta {
                     timestamp: ts,
                     session_id,
                     cwd,
                     model_provider,
+                    subagent_source,
+                    agent_role,
+                    agent_nickname,
                     text: payload_text.clone(),
                 }
             }
@@ -139,6 +199,24 @@ impl CodexEntry {
                 CodexEntry::UserMessage {
                     timestamp: ts,
                     text,
+                }
+            }
+            "response_item"
+                if payload["type"].as_str() == Some("message")
+                    && payload["role"].as_str() == Some("user") =>
+            {
+                let text = extract_codex_input_text(payload);
+                if text.is_empty() {
+                    CodexEntry::Other {
+                        timestamp: ts,
+                        entry_type,
+                        text,
+                    }
+                } else {
+                    CodexEntry::UserMessage {
+                        timestamp: ts,
+                        text,
+                    }
                 }
             }
             "response_item"
@@ -168,6 +246,29 @@ impl CodexEntry {
             },
         }
     }
+}
+
+/// Desktop rollouts store user turns as input_text blocks. Context injected
+/// by the app is not a user decision and must not become journal material.
+fn extract_codex_input_text(payload: &serde_json::Value) -> String {
+    let Some(content) = payload["content"].as_array() else {
+        return String::new();
+    };
+    content
+        .iter()
+        .filter(|block| block["type"].as_str() == Some("input_text"))
+        .filter_map(|block| block["text"].as_str())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .filter(|text| {
+            let injected_context = text.starts_with("<environment_context>")
+                || text.starts_with("<external_codex_apps_open_page>")
+                || (text.starts_with("# AGENTS.md instructions")
+                    && text.contains("<INSTRUCTIONS>"));
+            !injected_context
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Extracts text from output_text blocks in the payload's content array.
@@ -309,6 +410,8 @@ pub fn parse_codex_jsonl_file(path: &Path) -> Result<Vec<CodexEntry>, super::Par
     let file = std::fs::File::open(path)?;
     let reader = std::io::BufReader::new(file);
     let mut entries = Vec::new();
+    let mut response_user_indices = HashSet::new();
+    let mut event_users: HashMap<String, Vec<DateTime<Utc>>> = HashMap::new();
 
     for (line_num, line_result) in reader.lines().enumerate() {
         let line = line_result?;
@@ -317,7 +420,24 @@ pub fn parse_codex_jsonl_file(path: &Path) -> Result<Vec<CodexEntry>, super::Par
         }
 
         match serde_json::from_str::<CodexRawEntry>(&line) {
-            Ok(raw) => entries.push(CodexEntry::from_raw(raw)),
+            Ok(raw) => {
+                let response_user = raw.entry_type == "response_item"
+                    && raw.payload["type"].as_str() == Some("message")
+                    && raw.payload["role"].as_str() == Some("user");
+                if raw.entry_type == "event_msg"
+                    && raw.payload["type"].as_str() == Some("user_message")
+                    && let Some(text) = raw.payload["message"].as_str()
+                {
+                    event_users
+                        .entry(text.trim().to_string())
+                        .or_default()
+                        .push(raw.timestamp);
+                }
+                if response_user {
+                    response_user_indices.insert(entries.len());
+                }
+                entries.push(CodexEntry::from_raw(raw));
+            }
             Err(err) => {
                 eprintln!(
                     "Warning: Failed to parse line {} in {}: {}",
@@ -329,7 +449,33 @@ pub fn parse_codex_jsonl_file(path: &Path) -> Result<Vec<CodexEntry>, super::Par
         }
     }
 
-    Ok(entries)
+    // Older rollouts may record the same turn in both formats. Keep their
+    // event_msg copy, while preserving later identical questions and turns
+    // from a resumed session that switched to the newer format.
+    Ok(entries
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            if response_user_indices.contains(&index)
+                && let CodexEntry::UserMessage { timestamp, text } = &entry
+                && event_users.get_mut(text.trim()).is_some_and(|times| {
+                    let matched = times
+                        .iter()
+                        .position(|time| (*timestamp - *time).num_milliseconds().abs() <= 5_000);
+                    if let Some(index) = matched {
+                        times.swap_remove(index);
+                        true
+                    } else {
+                        false
+                    }
+                })
+            {
+                None
+            } else {
+                Some(entry)
+            }
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -339,6 +485,9 @@ enum CodexEntryFingerprint {
         session_id: String,
         cwd: String,
         model_provider: String,
+        subagent_source: Option<String>,
+        agent_role: Option<String>,
+        agent_nickname: Option<String>,
         text: String,
     },
     UserMessage {
@@ -368,12 +517,18 @@ fn entry_fingerprint(entry: &CodexEntry) -> CodexEntryFingerprint {
             session_id,
             cwd,
             model_provider,
+            subagent_source,
+            agent_role,
+            agent_nickname,
             text,
         } => CodexEntryFingerprint::SessionMeta {
             timestamp_millis: timestamp.timestamp_millis(),
             session_id: session_id.clone(),
             cwd: cwd.clone(),
             model_provider: model_provider.clone(),
+            subagent_source: subagent_source.clone(),
+            agent_role: agent_role.clone(),
+            agent_nickname: agent_nickname.clone(),
             text: text.clone(),
         },
         CodexEntry::UserMessage { timestamp, text } => CodexEntryFingerprint::UserMessage {
@@ -505,6 +660,130 @@ mod tests {
         } else {
             panic!("Expected SessionMeta variant");
         }
+    }
+
+    #[test]
+    fn test_parse_session_meta_entry_preserves_subagent_metadata() {
+        let json = r#"{"timestamp":"2026-04-22T09:00:00Z","type":"session_meta","payload":{"id":"sess-sub","cwd":"/Users/jinwoohan/.codex/memories","model_provider":"openai","source":{"subagent":"memory_consolidation"},"agent_role":"memory builder","agent_nickname":"Morpheus"}}"#;
+        let raw: CodexRawEntry = serde_json::from_str(json).unwrap();
+        let entry = CodexEntry::from_raw(raw);
+
+        if let CodexEntry::SessionMeta {
+            session_id,
+            cwd,
+            model_provider,
+            subagent_source,
+            agent_role,
+            agent_nickname,
+            ..
+        } = entry
+        {
+            assert_eq!(session_id, "sess-sub");
+            assert_eq!(cwd, "/Users/jinwoohan/.codex/memories");
+            assert_eq!(model_provider, "openai");
+            assert_eq!(subagent_source.as_deref(), Some("memory_consolidation"));
+            assert_eq!(agent_role.as_deref(), Some("memory builder"));
+            assert_eq!(agent_nickname.as_deref(), Some("Morpheus"));
+        } else {
+            panic!("Expected SessionMeta variant");
+        }
+    }
+
+    #[test]
+    fn test_parse_session_meta_entry_ignores_string_source_for_subagent_detection() {
+        let json = r#"{"timestamp":"2026-04-22T09:00:00Z","type":"session_meta","payload":{"id":"sess-cli","cwd":"/Users/jinwoohan/workspace/repos/personal/rwd","model_provider":"openai","source":"cli"}}"#;
+        let raw: CodexRawEntry = serde_json::from_str(json).unwrap();
+        let entry = CodexEntry::from_raw(raw);
+
+        if let CodexEntry::SessionMeta {
+            subagent_source,
+            agent_role,
+            agent_nickname,
+            ..
+        } = entry
+        {
+            assert_eq!(subagent_source, None);
+            assert_eq!(agent_role, None);
+            assert_eq!(agent_nickname, None);
+        } else {
+            panic!("Expected SessionMeta variant");
+        }
+    }
+
+    fn make_session_meta_entry(
+        session_id: &str,
+        cwd: &str,
+        subagent_source: Option<&str>,
+        agent_role: Option<&str>,
+        agent_nickname: Option<&str>,
+    ) -> CodexEntry {
+        use chrono::TimeZone;
+
+        CodexEntry::SessionMeta {
+            timestamp: chrono::Utc.with_ymd_and_hms(2026, 4, 22, 9, 0, 0).unwrap(),
+            session_id: session_id.to_string(),
+            cwd: cwd.to_string(),
+            model_provider: "openai".to_string(),
+            subagent_source: subagent_source.map(str::to_string),
+            agent_role: agent_role.map(str::to_string),
+            agent_nickname: agent_nickname.map(str::to_string),
+            text: "subagent".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_classify_codex_session_kind_interactive_when_only_suspicious_cwd_present() {
+        let entries = vec![make_session_meta_entry(
+            "interactive",
+            "/Users/jinwoohan/.codex/worktrees/1234/rwd",
+            None,
+            None,
+            None,
+        )];
+
+        assert_eq!(
+            classify_codex_session(&entries),
+            CodexSessionKind::Interactive
+        );
+    }
+
+    #[test]
+    fn test_classify_codex_session_kind_uses_subagent_source_only() {
+        let entries = vec![make_session_meta_entry(
+            "subagent-source",
+            "/Users/jinwoohan/workspace/repos/personal/rwd",
+            Some("memory_consolidation"),
+            None,
+            None,
+        )];
+
+        assert_eq!(classify_codex_session(&entries), CodexSessionKind::Subagent);
+    }
+
+    #[test]
+    fn test_classify_codex_session_kind_uses_agent_role_only() {
+        let entries = vec![make_session_meta_entry(
+            "subagent-role",
+            "/Users/jinwoohan/.codex/memories",
+            None,
+            Some("memory builder"),
+            None,
+        )];
+
+        assert_eq!(classify_codex_session(&entries), CodexSessionKind::Subagent);
+    }
+
+    #[test]
+    fn test_classify_codex_session_kind_uses_agent_nickname_only() {
+        let entries = vec![make_session_meta_entry(
+            "subagent-nickname",
+            "/Users/jinwoohan/.codex/memories",
+            None,
+            None,
+            Some("Morpheus"),
+        )];
+
+        assert_eq!(classify_codex_session(&entries), CodexSessionKind::Subagent);
     }
 
     #[test]
@@ -660,6 +939,9 @@ mod tests {
                 session_id: "s1".to_string(),
                 cwd: "/p".to_string(),
                 model_provider: "openai".to_string(),
+                subagent_source: None,
+                agent_role: None,
+                agent_nickname: None,
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
@@ -723,6 +1005,9 @@ mod tests {
                 session_id: "s1".to_string(),
                 cwd: "/p".to_string(),
                 model_provider: "openai".to_string(),
+                subagent_source: None,
+                agent_role: None,
+                agent_nickname: None,
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
@@ -767,6 +1052,9 @@ mod tests {
                 session_id: "s1".to_string(),
                 cwd: "/p".to_string(),
                 model_provider: "openai".to_string(),
+                subagent_source: None,
+                agent_role: None,
+                agent_nickname: None,
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
@@ -793,6 +1081,9 @@ mod tests {
                 session_id: "s1".to_string(),
                 cwd: "/p".to_string(),
                 model_provider: "openai".to_string(),
+                subagent_source: None,
+                agent_role: None,
+                agent_nickname: None,
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
@@ -825,6 +1116,9 @@ mod tests {
                 session_id: "s1".to_string(),
                 cwd: "/p".to_string(),
                 model_provider: "openai".to_string(),
+                subagent_source: None,
+                agent_role: None,
+                agent_nickname: None,
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
@@ -858,5 +1152,47 @@ mod tests {
             .collect();
 
         assert_eq!(kept_texts, vec!["at_start", "before_end"]);
+    }
+    #[test]
+    fn test_parse_user_message_from_response_item_input_text() {
+        let raw = serde_json::from_str::<CodexRawEntry>(r#"{"timestamp":"2026-10-20T09:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"최근 대화로 일지를 만들어줘"}]}}"#).expect("raw entry");
+        let entry = CodexEntry::from_raw(raw);
+        assert!(
+            matches!(entry, CodexEntry::UserMessage { text, .. } if text == "최근 대화로 일지를 만들어줘")
+        );
+    }
+
+    #[test]
+    fn test_parse_response_item_user_skips_injected_context_blocks() {
+        let raw = serde_json::from_str::<CodexRawEntry>(r##"{"timestamp":"2026-10-20T09:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions\n<INSTRUCTIONS>rules</INSTRUCTIONS>"},{"type":"input_text","text":"<environment_context>context</environment_context>"},{"type":"input_text","text":"<external_codex_apps_open_page>{\"page_id\":null}</external_codex_apps_open_page>"},{"type":"input_text","text":"실제 질문"}]}}"##).expect("raw entry");
+        assert!(
+            matches!(CodexEntry::from_raw(raw), CodexEntry::UserMessage { text, .. } if text == "실제 질문")
+        );
+    }
+
+    #[test]
+    fn test_parse_codex_jsonl_file_dedupes_legacy_echo_keeps_later_user_turns() {
+        let path = std::env::temp_dir().join(format!(
+            "rwd-user-format-{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let lines = [
+            r#"{"timestamp":"2026-10-20T09:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"계속해줘"}]}}"#,
+            r#"{"timestamp":"2026-10-20T09:00:00.100Z","type":"event_msg","payload":{"type":"user_message","message":"계속해줘"}}"#,
+            r#"{"timestamp":"2026-10-20T09:00:02Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"계속해줘"}]}}"#,
+            r#"{"timestamp":"2026-10-20T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"계속해줘"}]}}"#,
+            r#"{"timestamp":"2026-10-20T09:02:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"다음 작업"}]}}"#,
+        ];
+        std::fs::write(&path, lines.join("\n")).expect("fixture");
+        let entries = parse_codex_jsonl_file(&path).expect("parsed");
+        std::fs::remove_file(path).expect("cleanup");
+        let summary = summarize_codex_entries(&entries);
+        assert_eq!(summary.user_count, 4);
+        assert!(entries.iter().any(
+            |entry| matches!(entry, CodexEntry::UserMessage { text, .. } if text == "다음 작업")
+        ));
     }
 }
