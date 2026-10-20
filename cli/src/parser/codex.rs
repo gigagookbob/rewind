@@ -7,7 +7,7 @@
 
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
@@ -197,6 +197,24 @@ impl CodexEntry {
             }
             "response_item"
                 if payload["type"].as_str() == Some("message")
+                    && payload["role"].as_str() == Some("user") =>
+            {
+                let text = extract_codex_input_text(payload);
+                if text.is_empty() {
+                    CodexEntry::Other {
+                        timestamp: ts,
+                        entry_type,
+                        text,
+                    }
+                } else {
+                    CodexEntry::UserMessage {
+                        timestamp: ts,
+                        text,
+                    }
+                }
+            }
+            "response_item"
+                if payload["type"].as_str() == Some("message")
                     && payload["role"].as_str() == Some("assistant") =>
             {
                 let text = extract_codex_output_text(payload);
@@ -222,6 +240,29 @@ impl CodexEntry {
             },
         }
     }
+}
+
+/// Desktop rollouts store user turns as input_text blocks. Context injected
+/// by the app is not a user decision and must not become journal material.
+fn extract_codex_input_text(payload: &serde_json::Value) -> String {
+    let Some(content) = payload["content"].as_array() else {
+        return String::new();
+    };
+    content
+        .iter()
+        .filter(|block| block["type"].as_str() == Some("input_text"))
+        .filter_map(|block| block["text"].as_str())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .filter(|text| {
+            let injected_context = text.starts_with("<environment_context>")
+                || text.starts_with("<external_codex_apps_open_page>")
+                || (text.starts_with("# AGENTS.md instructions")
+                    && text.contains("<INSTRUCTIONS>"));
+            !injected_context
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Extracts text from output_text blocks in the payload's content array.
@@ -363,6 +404,8 @@ pub fn parse_codex_jsonl_file(path: &Path) -> Result<Vec<CodexEntry>, super::Par
     let file = std::fs::File::open(path)?;
     let reader = std::io::BufReader::new(file);
     let mut entries = Vec::new();
+    let mut response_user_indices = HashSet::new();
+    let mut event_users: HashMap<String, Vec<DateTime<Utc>>> = HashMap::new();
 
     for (line_num, line_result) in reader.lines().enumerate() {
         let line = line_result?;
@@ -371,7 +414,24 @@ pub fn parse_codex_jsonl_file(path: &Path) -> Result<Vec<CodexEntry>, super::Par
         }
 
         match serde_json::from_str::<CodexRawEntry>(&line) {
-            Ok(raw) => entries.push(CodexEntry::from_raw(raw)),
+            Ok(raw) => {
+                let response_user = raw.entry_type == "response_item"
+                    && raw.payload["type"].as_str() == Some("message")
+                    && raw.payload["role"].as_str() == Some("user");
+                if raw.entry_type == "event_msg"
+                    && raw.payload["type"].as_str() == Some("user_message")
+                    && let Some(text) = raw.payload["message"].as_str()
+                {
+                    event_users
+                        .entry(text.trim().to_string())
+                        .or_default()
+                        .push(raw.timestamp);
+                }
+                if response_user {
+                    response_user_indices.insert(entries.len());
+                }
+                entries.push(CodexEntry::from_raw(raw));
+            }
             Err(err) => {
                 eprintln!(
                     "Warning: Failed to parse line {} in {}: {}",
@@ -383,7 +443,27 @@ pub fn parse_codex_jsonl_file(path: &Path) -> Result<Vec<CodexEntry>, super::Par
         }
     }
 
-    Ok(entries)
+    // Older rollouts may record the same turn in both formats. Keep their
+    // event_msg copy, while preserving later identical questions and turns
+    // from a resumed session that switched to the newer format.
+    Ok(entries
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            if response_user_indices.contains(&index)
+                && let CodexEntry::UserMessage { timestamp, text } = &entry
+                && event_users.get(text.trim()).is_some_and(|times| {
+                    times
+                        .iter()
+                        .any(|time| (*timestamp - *time).num_milliseconds().abs() <= 5_000)
+                })
+            {
+                None
+            } else {
+                Some(entry)
+            }
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1060,5 +1140,46 @@ mod tests {
             .collect();
 
         assert_eq!(kept_texts, vec!["at_start", "before_end"]);
+    }
+    #[test]
+    fn test_parse_user_message_from_response_item_input_text() {
+        let raw = serde_json::from_str::<CodexRawEntry>(r#"{"timestamp":"2026-10-20T09:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"최근 대화로 일지를 만들어줘"}]}}"#).expect("raw entry");
+        let entry = CodexEntry::from_raw(raw);
+        assert!(
+            matches!(entry, CodexEntry::UserMessage { text, .. } if text == "최근 대화로 일지를 만들어줘")
+        );
+    }
+
+    #[test]
+    fn test_parse_response_item_user_skips_injected_context_blocks() {
+        let raw = serde_json::from_str::<CodexRawEntry>(r##"{"timestamp":"2026-10-20T09:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions\n<INSTRUCTIONS>rules</INSTRUCTIONS>"},{"type":"input_text","text":"<environment_context>context</environment_context>"},{"type":"input_text","text":"<external_codex_apps_open_page>{\"page_id\":null}</external_codex_apps_open_page>"},{"type":"input_text","text":"실제 질문"}]}}"##).expect("raw entry");
+        assert!(
+            matches!(CodexEntry::from_raw(raw), CodexEntry::UserMessage { text, .. } if text == "실제 질문")
+        );
+    }
+
+    #[test]
+    fn test_parse_codex_jsonl_file_dedupes_legacy_echo_keeps_later_user_turns() {
+        let path = std::env::temp_dir().join(format!(
+            "rwd-user-format-{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let lines = [
+            r#"{"timestamp":"2026-10-20T09:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"계속해줘"}]}}"#,
+            r#"{"timestamp":"2026-10-20T09:00:00.100Z","type":"event_msg","payload":{"type":"user_message","message":"계속해줘"}}"#,
+            r#"{"timestamp":"2026-10-20T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"계속해줘"}]}}"#,
+            r#"{"timestamp":"2026-10-20T09:02:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"다음 작업"}]}}"#,
+        ];
+        std::fs::write(&path, lines.join("\n")).expect("fixture");
+        let entries = parse_codex_jsonl_file(&path).expect("parsed");
+        std::fs::remove_file(path).expect("cleanup");
+        let summary = summarize_codex_entries(&entries);
+        assert_eq!(summary.user_count, 3);
+        assert!(entries.iter().any(
+            |entry| matches!(entry, CodexEntry::UserMessage { text, .. } if text == "다음 작업")
+        ));
     }
 }
