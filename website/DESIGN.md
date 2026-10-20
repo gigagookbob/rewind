@@ -92,13 +92,14 @@ Key characteristics:
 - Card style: 24px padding, 10px radius, bordered dark surface.
 - `comparison-rwd` has slightly brighter border emphasis.
 
-### Install Blocks
-- Vertical stack of command rows.
-- Each row has platform label + mono command + icon-only copy button.
-- Copy states:
-  - Default: dim border/text
-  - Hover: brighter border/text
-  - Copied: green border/text (`.copy-btn.copied`)
+### Install Guide
+- Keep the environment requirements above a native ordered list of four steps: install, PATH, initial setup, first run.
+- The install anchor leaves 64px above the section so the sticky navigation does not cover its heading.
+- Reuse the bordered command rows. Long commands scroll inside their row without widening the page.
+- Use a native details/summary disclosure for persistent Zsh and Bash PATH commands; keep it collapsed by default.
+- Use existing color and typography tokens. Step headings are 18px/600, instructions 14px with 1.7 line height, with 32px between steps.
+- Icon-only copy buttons have a specific accessible label and a 44px target. Copy buttons and the disclosure have a visible keyboard focus outline.
+- Copy states retain the existing dim border, brighter hover and green copied state.
 
 ### FAQ
 - Two-column layout on desktop: left title block and right border-line accordion list.

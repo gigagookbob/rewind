@@ -68,7 +68,7 @@
             "@type": "SoftwareApplication",
             "name": "rwd",
             "applicationCategory": "DeveloperApplication",
-            "operatingSystem": "macOS, Linux, WSL2 (Linux shell)",
+            "operatingSystem": "macOS (Apple Silicon), Linux x86_64 and WSL2 x86_64 (glibc 2.34+)",
             "description": "Open-source CLI for AI agents like Claude Code and Codex. Turns your coding day into one daily note of decisions, questions, and corrections.",
             "url": "https://www.rewind.day/",
             "image": "https://www.rewind.day/assets/og-image.png",
@@ -118,7 +118,7 @@
                 "name": "What does it cost?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "rwd is free and MIT licensed. You bring your own API key for whichever model it uses."
+                  "text": "rwd is free and MIT licensed. Use your Codex CLI login, or your own OpenAI or Anthropic API key."
                 }
               },
               {
@@ -138,7 +138,7 @@
     <link rel="stylesheet" href="css/00-tokens.css?v=6" />
     <link rel="stylesheet" href="css/01-base.css?v=6" />
     <link rel="stylesheet" href="css/02-layout.css?v=6" />
-    <link rel="stylesheet" href="css/03-components.css?v=6" />
+    <link rel="stylesheet" href="css/03-components.css?v=7" />
     <link rel="stylesheet" href="css/04-showcase.css?v=6" />
     <link rel="stylesheet" href="css/05-utilities.css?v=6" />
     <link rel="stylesheet" href="css/06-responsive.css?v=6" />
@@ -502,35 +502,100 @@
       <div class="divider"></div>
 
       <!-- Install -->
-      <section class="section fade-in" id="install">
+      <section class="section fade-in" id="install" aria-labelledby="install-title">
         <div class="container">
-          <h2 class="section-title install-title">Install</h2>
-          <div class="section-subtitle-spacer"></div>
-          <div class="install-blocks">
-            <div class="install-block">
-              <div class="install-info">
-                <span class="install-platform">Linux / macOS / WSL2 (Linux shell)</span>
-                <code class="install-cmd"
-                  >curl -fsSL https://raw.githubusercontent.com/gigagookbob/rewind/main/cli/install.sh |
-                  bash</code
-                >
-              </div>
-              <button
-                class="copy-btn"
-                data-copy="curl -fsSL https://raw.githubusercontent.com/gigagookbob/rewind/main/cli/install.sh | bash"
-              >
-                <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24">
-                  <use href="#icon-copy"></use>
-                </svg>
-              </button>
-            </div>
+          <h2 class="section-title install-title" id="install-title">Install and set up</h2>
+          <p class="section-subtitle">From your first install to your first daily note.</p>
+          <div class="install-support">
+            <h3>Check your environment</h3>
+            <ul>
+              <li><strong>macOS:</strong> Apple Silicon (arm64).</li>
+              <li><strong>Linux / WSL2:</strong> x86_64, with glibc 2.34 or later.</li>
+            </ul>
+            <p>No Rust toolchain is needed for these downloads. Intel Macs and Linux ARM are not covered by this installer. Native Windows is not supported; use an x86_64 <a href="https://learn.microsoft.com/en-us/windows/wsl/install" target="_blank" rel="noopener">WSL2 Linux shell</a>.</p>
           </div>
-          <p class="install-note">
-            Native Windows is not supported. Use
-            <a href="https://learn.microsoft.com/en-us/windows/wsl/install" target="_blank" rel="noopener"
-              ><strong><u>WSL2</u></strong></a
-            >.
-          </p>
+          <ol class="install-steps">
+            <li>
+              <h3>Install rwd</h3>
+              <p>Run this in a Bash or Zsh terminal. It downloads the latest release to <code>~/.local/bin/rwd</code>.</p>
+              <div class="install-block">
+                <div class="install-info">
+
+                  <code class="install-cmd">curl -fsSL https://raw.githubusercontent.com/gigagookbob/rewind/main/cli/install.sh | bash</code>
+                </div>
+                <button class="copy-btn" type="button" aria-label="Copy install command" title="Copy install command" data-copy="curl -fsSL https://raw.githubusercontent.com/gigagookbob/rewind/main/cli/install.sh | bash">
+                  <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-copy"></use></svg>
+                </button>
+              </div>
+            </li>
+            <li>
+              <h3>Make the command available</h3>
+              <p>Try <code>rwd --version</code> first. If your terminal says <code>rwd: command not found</code>, add the install folder to PATH for this terminal:</p>
+              <div class="install-block">
+                <div class="install-info">
+
+                  <code class="install-cmd">export PATH=&quot;$HOME/.local/bin:$PATH&quot;</code>
+                </div>
+                <button class="copy-btn" type="button" aria-label="Copy PATH command" title="Copy PATH command" data-copy="export PATH=&quot;$HOME/.local/bin:$PATH&quot;">
+                  <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-copy"></use></svg>
+                </button>
+              </div>
+              <p>Run <code>rwd --version</code> again. It should print the installed version. If it already worked, skip the PATH commands.</p>
+              <details class="install-persist">
+                <summary>Keep PATH when you reopen your terminal</summary>
+                <p>Run only the command for your shell. Use <code>echo $SHELL</code> if you are unsure, then open a new terminal after running it.</p>
+              <div class="install-block">
+                <div class="install-info">
+                  <span class="install-platform">Zsh (the macOS default)</span>
+                  <code class="install-cmd">echo &#x27;export PATH=&quot;$HOME/.local/bin:$PATH&quot;&#x27; &gt;&gt; ~/.zshrc</code>
+                </div>
+                <button class="copy-btn" type="button" aria-label="Copy Zsh PATH setup" title="Copy Zsh PATH setup" data-copy="echo &#x27;export PATH=&quot;$HOME/.local/bin:$PATH&quot;&#x27; &gt;&gt; ~/.zshrc">
+                  <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-copy"></use></svg>
+                </button>
+              </div>
+              <div class="install-block">
+                <div class="install-info">
+                  <span class="install-platform">Bash (common on Linux / WSL2)</span>
+                  <code class="install-cmd">echo &#x27;export PATH=&quot;$HOME/.local/bin:$PATH&quot;&#x27; &gt;&gt; ~/.bashrc</code>
+                </div>
+                <button class="copy-btn" type="button" aria-label="Copy Bash PATH setup" title="Copy Bash PATH setup" data-copy="echo &#x27;export PATH=&quot;$HOME/.local/bin:$PATH&quot;&#x27; &gt;&gt; ~/.bashrc">
+                  <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-copy"></use></svg>
+                </button>
+              </div>
+              </details>
+            </li>
+            <li>
+              <h3>Choose a provider and note folder</h3>
+              <div class="install-block">
+                <div class="install-info">
+
+                  <code class="install-cmd">rwd init</code>
+                </div>
+                <button class="copy-btn" type="button" aria-label="Copy initial setup command" title="Copy initial setup command" data-copy="rwd init">
+                  <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-copy"></use></svg>
+                </button>
+              </div>
+              <ul class="install-choices">
+                <li><strong>Codex:</strong> <a href="https://learn.chatgpt.com/docs/codex/cli" target="_blank" rel="noopener">Install Codex CLI</a> and run <code>codex login</code> first. Enter <code>codex</code> at the provider prompt. This option uses your Codex login, not an API key.</li>
+                <li><strong>Anthropic or OpenAI:</strong> enter <code>anthropic</code> or <code>openai</code> and paste that provider's API key when prompted. Pressing Enter without a choice selects Anthropic.</li>
+              </ul>
+              <p>Choose where to save Markdown files and select <code>en</code> or <code>ko</code>. For Obsidian, choose your vault's daily notes folder. Settings are saved in <code>~/.config/rwd/config.toml</code>.</p>
+            </li>
+            <li>
+              <h3>Create your first daily note</h3>
+              <p>After using Claude Code or Codex, run:</p>
+              <div class="install-block">
+                <div class="install-info">
+
+                  <code class="install-cmd">rwd today</code>
+                </div>
+                <button class="copy-btn" type="button" aria-label="Copy first run command" title="Copy first run command" data-copy="rwd today">
+                  <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-copy"></use></svg>
+                </button>
+              </div>
+              <p>rwd reads today's local session logs and saves a dated <code>.md</code> file in your chosen folder. If no sessions are found, use your coding agent first, then run it again.</p>
+            </li>
+          </ol>
         </div>
       </section>
 
@@ -574,7 +639,7 @@
                 <span class="faq-icon">+</span>
               </button>
               <div class="faq-answer">
-                <p>rwd is free and MIT licensed. You bring your own API key for whichever model it uses.</p>
+                <p>rwd is free and MIT licensed. Use your Codex CLI login, or your own OpenAI or Anthropic API key.</p>
               </div>
             </div>
             <div class="faq-item">
