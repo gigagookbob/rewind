@@ -1692,4 +1692,25 @@ mod tests {
         assert_eq!(earliest.format("%H:%M").to_string(), "00:10");
         assert_eq!(latest.format("%H:%M").to_string(), "20:44");
     }
+    #[test]
+    fn test_collect_codex_sessions_excludes_nested_thread_spawn_source() {
+        let date = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).expect("date");
+        let base = unique_temp_dir("rwd_test_codex_nested_subagent");
+        let root = base.join("codex-root");
+        let day_dir = root.join("2099/01/01");
+        std::fs::create_dir_all(&day_dir).expect("day dir");
+        write_codex_rollout(
+            &day_dir.join("rollout-nested-subagent.jsonl"),
+            "nested-subagent",
+            "/project",
+            r#","source":{"subagent":{"thread_spawn":{"parent_thread_id":"019d0000-0000-7000-8000-000000000001","depth":1}}}"#,
+        );
+        let cfg = test_config(Some(vec![root.to_string_lossy().to_string()]), None);
+        let (sessions, _) = collect_codex_sessions(date, Some(&cfg));
+        std::fs::remove_dir_all(base).expect("cleanup");
+        assert!(
+            sessions.is_empty(),
+            "nested subagent metadata must exclude the session without a role or nickname"
+        );
+    }
 }

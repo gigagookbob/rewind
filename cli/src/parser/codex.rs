@@ -127,7 +127,13 @@ fn optional_non_empty_string(value: &serde_json::Value) -> Option<String> {
 
 fn extract_subagent_source(payload: &serde_json::Value) -> Option<String> {
     let source = payload.get("source")?.as_object()?;
-    optional_non_empty_string(source.get("subagent")?)
+    let subagent = source.get("subagent")?;
+    match subagent {
+        serde_json::Value::String(_) => optional_non_empty_string(subagent),
+        // ThreadSpawn and Other carry nested metadata rather than a unit string.
+        serde_json::Value::Object(details) if !details.is_empty() => Some(subagent.to_string()),
+        _ => None,
+    }
 }
 
 /// Returns `Subagent` if any `SessionMeta` entry carries an explicit hard
