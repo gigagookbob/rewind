@@ -76,6 +76,9 @@ jobs:
     needs: [guard, build]
     if: needs.guard.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
 
     steps:
       - uses: actions/checkout@v4

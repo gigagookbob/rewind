@@ -9,6 +9,8 @@ on:
       - cli/prompts/**
       - cli/Cargo.toml
       - cli/Cargo.lock
+      - .github/workflows/release-on-main.yml
+      - .github/workflows/release.yml
 
 permissions:
   contents: write
@@ -52,6 +54,9 @@ jobs:
   release:
     needs: preflight
     if: needs.preflight.outputs.should_release == 'true'
+    permissions:
+      contents: write
+      pull-requests: read
     uses: ./.github/workflows/release.yml
     with:
       tag_name: ${{ needs.preflight.outputs.tag_name }}
