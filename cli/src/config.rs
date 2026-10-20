@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 pub type ConfigError = Box<dyn std::error::Error>;
-pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.4";
+/// Let Codex use its configured model unless the user explicitly overrides it.
+pub const DEFAULT_CODEX_MODEL: &str = "default";
 pub const DEFAULT_CODEX_REASONING_EFFORT: &str = "xhigh";
 
 /// Supported languages for LLM output.

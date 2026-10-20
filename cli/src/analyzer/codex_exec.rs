@@ -146,13 +146,12 @@ async fn run_codex_exec(
     .map_err(Into::into)
 }
 
-fn run_codex_exec_blocking(
-    prompt: &str,
+fn build_codex_exec_command(
     schema_path: Option<&Path>,
     max_tokens: u32,
     model: &str,
     reasoning_effort: &str,
-) -> Result<(String, ApiUsage), AnalyzerError> {
+) -> Command {
     let temp_dir = std::env::temp_dir();
 
     let mut cmd = Command::new("codex");
@@ -166,8 +165,6 @@ fn run_codex_exec_blocking(
         .arg("read-only")
         .arg("-C")
         .arg(&temp_dir)
-        .arg("--model")
-        .arg(model)
         .arg("-c")
         .arg(format!("model_reasoning_effort={reasoning_effort}"))
         .arg("-c")
@@ -177,10 +174,26 @@ fn run_codex_exec_blocking(
         cmd.arg("--output-schema").arg(path);
     }
 
+    if model != crate::config::DEFAULT_CODEX_MODEL && !model.trim().is_empty() {
+        cmd.arg("--model").arg(model);
+    }
+
     cmd.arg("-")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    cmd
+}
+
+fn run_codex_exec_blocking(
+    prompt: &str,
+    schema_path: Option<&Path>,
+    max_tokens: u32,
+    model: &str,
+    reasoning_effort: &str,
+) -> Result<(String, ApiUsage), AnalyzerError> {
+    let mut cmd = build_codex_exec_command(schema_path, max_tokens, model, reasoning_effort);
 
     let mut child = cmd.spawn()?;
     if let Some(stdin) = child.stdin.as_mut() {
@@ -340,5 +353,25 @@ mod tests {
         let content = std::fs::read_to_string(&path).expect("schema file should be readable");
         assert!(content.contains("\"sessions\""));
         let _ = std::fs::remove_file(path);
+    }
+    #[test]
+    fn test_default_model_inherits_codex_cli_configuration() {
+        let cmd = build_codex_exec_command(None, 128, crate::config::DEFAULT_CODEX_MODEL, "high");
+        let args: Vec<_> = cmd.get_args().map(|arg| arg.to_string_lossy()).collect();
+        assert!(!args.iter().any(|arg| arg == "--model"));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "-s" && pair[1] == "read-only")
+        );
+    }
+
+    #[test]
+    fn test_explicit_model_still_overrides_codex_cli_configuration() {
+        let cmd = build_codex_exec_command(None, 128, "custom-model", "high");
+        let args: Vec<_> = cmd.get_args().map(|arg| arg.to_string_lossy()).collect();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "--model" && pair[1] == "custom-model")
+        );
     }
 }
