@@ -49,6 +49,13 @@ pub struct UserEntry {
     /// nested agent invocation rather than the parent interactive session.
     #[serde(default)]
     pub is_sidechain: bool,
+    /// Context Claude Code injects as a user turn (skill bodies, command
+    /// caveats); not typed by the user.
+    #[serde(default)]
+    pub is_meta: bool,
+    /// Summary Claude Code writes when it compacts a conversation.
+    #[serde(default)]
+    pub is_compact_summary: bool,
 }
 
 /// Assistant (AI) response entry.
@@ -390,15 +397,29 @@ fn has_automation_hint(text: &str, hints: &[&str]) -> bool {
     hints.iter().any(|hint| lower.contains(hint))
 }
 
-fn message_has_automation_prompt(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::String(text) => has_automation_hint(text, AUTOMATION_PROMPT_HINTS),
-        serde_json::Value::Array(items) => items.iter().any(message_has_automation_prompt),
-        serde_json::Value::Object(map) => map.values().any(message_has_automation_prompt),
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
-            false
-        }
+/// Checks only the prompt the user sent: a string `content` or its top-level
+/// `text` blocks. Tool results, injected context, and compaction summaries are
+/// skipped, so a session that merely reads or discusses the hint phrase is not
+/// mistaken for an automated one.
+fn user_prompt_has_automation_hint(entry: &UserEntry) -> bool {
+    if entry.is_meta || entry.is_compact_summary {
+        return false;
     }
+    let Some(content) = entry.message.as_ref().and_then(|m| m.get("content")) else {
+        return false;
+    };
+    if let Some(text) = content.as_str() {
+        return has_automation_hint(text, AUTOMATION_PROMPT_HINTS);
+    }
+    content.as_array().is_some_and(|blocks| {
+        blocks.iter().any(|block| {
+            block.get("type").and_then(serde_json::Value::as_str) == Some("text")
+                && block
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|text| has_automation_hint(text, AUTOMATION_PROMPT_HINTS))
+        })
+    })
 }
 
 fn is_automated_entry(entry: &LogEntry) -> bool {
@@ -410,9 +431,7 @@ fn is_automated_entry(entry: &LogEntry) -> bool {
                 || e.cwd
                     .as_deref()
                     .is_some_and(|cwd| has_automation_hint(cwd, AUTOMATION_CWD_HINTS))
-                || e.message
-                    .as_ref()
-                    .is_some_and(message_has_automation_prompt)
+                || user_prompt_has_automation_hint(e)
         }
         LogEntry::Assistant(e) => {
             e.entrypoint
@@ -785,6 +804,55 @@ mod tests {
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].session_id, "s5");
     }
+
+    #[test]
+    fn test_filter_automated_sessions_detects_prompt_in_user_text_block() {
+        let entries = vec![serde_json::from_str::<LogEntry>(
+            r#"{"type":"user","sessionId":"s6","timestamp":"2026-03-11T12:00:00Z","uuid":"u6","entrypoint":"cli","message":{"role":"user","content":[{"type":"text","text":"Run exactly one Bash command and return output only."}]}}"#,
+        )
+        .expect("text block prompt")];
+
+        let filtered = filter_automated_sessions(entries, false);
+
+        assert_eq!(filtered.counts.automated, 1);
+        assert!(filtered.entries.is_empty());
+    }
+
+    #[test]
+    fn test_filter_automated_sessions_ignores_prompt_hint_outside_user_text() {
+        // An interactive session that read rwd's own test code (tool results),
+        // loaded a skill (isMeta), and was compacted (isCompactSummary). The
+        // hint phrase appears only in those Claude Code-written entries.
+        let entries = vec![
+            serde_json::from_str::<LogEntry>(
+                r#"{"type":"user","sessionId":"s7","timestamp":"2026-03-11T12:00:00Z","uuid":"u7a","entrypoint":"claude-desktop","message":{"role":"user","content":"why is this test failing?"}}"#,
+            )
+            .expect("human prompt"),
+            serde_json::from_str::<LogEntry>(
+                r#"{"type":"user","sessionId":"s7","timestamp":"2026-03-11T12:01:00Z","uuid":"u7b","entrypoint":"claude-desktop","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"\"content\":\"Run exactly one Bash command\""}]}}"#,
+            )
+            .expect("string tool result"),
+            serde_json::from_str::<LogEntry>(
+                r#"{"type":"user","sessionId":"s7","timestamp":"2026-03-11T12:02:00Z","uuid":"u7c","entrypoint":"claude-desktop","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":[{"type":"text","text":"Run exactly one Bash command"}]}]}}"#,
+            )
+            .expect("block tool result"),
+            serde_json::from_str::<LogEntry>(
+                r#"{"type":"user","sessionId":"s7","timestamp":"2026-03-11T12:03:00Z","uuid":"u7d","entrypoint":"claude-desktop","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"Skill body: Run exactly one Bash command"}]}}"#,
+            )
+            .expect("meta"),
+            serde_json::from_str::<LogEntry>(
+                r#"{"type":"user","sessionId":"s7","timestamp":"2026-03-11T12:04:00Z","uuid":"u7e","entrypoint":"claude-desktop","isCompactSummary":true,"message":{"role":"user","content":"Summary: discussed the run exactly one Bash command hint"}}"#,
+            )
+            .expect("compact summary"),
+        ];
+
+        let filtered = filter_automated_sessions(entries, false);
+
+        assert_eq!(filtered.counts.interactive, 1);
+        assert_eq!(filtered.counts.automated, 0);
+        assert_eq!(filtered.entries.len(), 5);
+    }
+
     #[test]
     fn test_filter_automated_sessions_drops_inline_sidechain_entries() {
         // Parent session with one sidechain (Task subagent) turn mixed in.
