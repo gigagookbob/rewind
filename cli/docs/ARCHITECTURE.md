@@ -75,7 +75,8 @@ rwd/
 │   │   ├── claude.rs    # Claude Code log parser
 │   │   └── codex.rs     # Codex log parser
 │   ├── analyzer/        # Structured data → LLM insight extraction
-│   │   ├── mod.rs       # Orchestrator
+│   │   ├── mod.rs       # 세션 작업 생성, 실행계획과 분석 진입점
+│   │   ├── executor.rs  # 병렬 실행, 재시도와 결과 순서 복원
 │   │   ├── anthropic.rs # Anthropic Claude API client
 │   │   ├── codex_exec.rs# Codex CLI (codex exec) provider backend
 │   │   ├── insight.rs   # Response parsing
