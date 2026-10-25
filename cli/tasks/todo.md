@@ -19,14 +19,14 @@ cargo test --locked
 **설명:** 새 `sources` 모듈에 명세의 어댑터 계약(`SourceAdapter`, `CollectContext`, `SourceCollection`, `CollectedSession`, `SourceFingerprint`, `registered_adapters`)을 만들고, Claude 어댑터를 넣습니다. Claude 어댑터는 `commands/collection.rs`의 `collect_claude_entries_with_stats` 흐름(폴더 찾기, 날짜 거르기, 중복 지우기, 자동화 세션 빼기, 정렬)을 그대로 옮기고, `analyzer::build_claude_session_tasks`로 `SessionTask`를 만듭니다. 활동 시각과 토큰 합계도 채웁니다. 이 작업에서는 `commands/`를 바꾸지 않습니다. `sources` 모듈에는 작업 4까지만 `#[allow(dead_code)]`를 둡니다.
 
 **수용 기준:**
-- [ ] 같은 임시 폴더 표본에서 `ClaudeAdapter::with_roots(...).collect(...)`가 만든 `SessionTask`의 세션 ID, `prompt_text`, `estimated_tokens`가 옛 함수(`collect_claude_entries` 다음 `build_claude_session_tasks`) 결과와 같습니다. 이 비교 테스트는 옛 함수가 있는 `commands/collection.rs`의 테스트 모듈에 둡니다.
-- [ ] `test_collect_claude_entries_dedupes_across_roots`와 같은 내용의 테스트가 `sources/claude.rs`에 있고 통과합니다. 표본의 `prompt_text`를 그대로 적은 고정 테스트도 하나 둡니다.
-- [ ] 자동화 세션은 `excluded`에 `automated`로 세어지고, `fingerprint.entry_count`는 지금의 `claude_entry_count`와 같은 값입니다.
+- [x] 같은 임시 폴더 표본에서 `ClaudeAdapter::with_roots(...).collect(...)`가 만든 `SessionTask`의 세션 ID, `prompt_text`, `estimated_tokens`가 옛 함수(`collect_claude_entries` 다음 `build_claude_session_tasks`) 결과와 같습니다. 이 비교 테스트는 옛 함수가 있는 `commands/collection.rs`의 테스트 모듈에 둡니다.
+- [x] `test_collect_claude_entries_dedupes_across_roots`와 같은 내용의 테스트가 `sources/claude.rs`에 있고 통과합니다. 표본의 `prompt_text`를 그대로 적은 고정 테스트도 하나 둡니다.
+- [x] 자동화 세션은 `excluded`에 `automated`로 세어지고, `fingerprint.entry_count`는 지금의 `claude_entry_count`와 같은 값입니다.
 
 **확인:**
-- [ ] `cargo test --locked sources::claude`
-- [ ] `cargo test --locked commands::collection`
-- [ ] 공통 세 명령
+- [x] `cargo test --locked sources::claude`
+- [x] `cargo test --locked commands::collection`
+- [x] 공통 세 명령
 
 **의존:** 없음
 

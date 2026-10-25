@@ -305,6 +305,76 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
     }
 
+    /// Asserts both task lists agree on what the analyzer receives.
+    fn assert_same_tasks(
+        legacy: &[crate::analyzer::SessionTask],
+        adapter: &[&crate::analyzer::SessionTask],
+    ) {
+        assert_eq!(legacy.len(), adapter.len());
+        for (old, new) in legacy.iter().zip(adapter) {
+            assert_eq!(old.session_id, new.session_id);
+            assert_eq!(old.prompt_text, new.prompt_text);
+            assert_eq!(old.estimated_tokens, new.estimated_tokens);
+        }
+    }
+
+    #[test]
+    fn test_claude_adapter_matches_legacy_collection() {
+        use crate::sources::SourceAdapter;
+
+        let date = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).expect("date");
+        let base = unique_temp_dir("rwd_test_claude_adapter_parity");
+        let root_a = base.join("claude-a");
+        let root_b = base.join("claude-b");
+        std::fs::create_dir_all(root_a.join("project-a")).expect("project a");
+        std::fs::create_dir_all(root_b.join("project-b")).expect("project b");
+        std::fs::write(
+            root_a.join("project-a/session-1.jsonl"),
+            [
+                r#"{"type":"user","sessionId":"parity-s1","timestamp":"2099-01-01T12:00:00Z","uuid":"u1","message":{"role":"user","content":"Plan the adapter split."}}"#,
+                r#"{"type":"assistant","sessionId":"parity-s1","timestamp":"2099-01-01T12:00:30Z","uuid":"a1","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Start with Claude."},{"type":"text","text":"Move collection first."},{"type":"tool_use","name":"Edit","id":"t1","input":{"file_path":"x.rs"}}],"usage":{"input_tokens":10,"output_tokens":5}}}"#,
+                r#"{"type":"user","sessionId":"parity-auto","timestamp":"2099-01-01T12:10:00Z","uuid":"u9","entrypoint":"sdk-cli","message":{"content":"Run exactly one Bash command"}}"#,
+            ]
+            .join("\n"),
+        )
+        .expect("write a");
+        std::fs::write(
+            root_b.join("project-b/session-2.jsonl"),
+            [
+                r#"{"type":"user","sessionId":"parity-s2","timestamp":"2099-01-01T09:00:00Z","uuid":"u2","message":{"role":"user","content":"Earlier session in another root."}}"#,
+                r#"{"type":"assistant","sessionId":"parity-s2","timestamp":"2099-01-01T09:01:00Z","uuid":"a2","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}"#,
+                r#"{"type":"user","sessionId":"parity-s1","timestamp":"2099-01-01T12:00:00Z","uuid":"u1","message":{"role":"user","content":"Plan the adapter split."}}"#,
+            ]
+            .join("\n"),
+        )
+        .expect("write b");
+
+        let cfg = test_config(
+            None,
+            Some(vec![
+                root_a.to_string_lossy().to_string(),
+                root_b.to_string_lossy().to_string(),
+            ]),
+        );
+        let legacy_entries = collect_claude_entries(date, Some(&cfg), false);
+        let legacy_tasks =
+            crate::analyzer::build_claude_session_tasks(&legacy_entries).expect("legacy tasks");
+
+        let collection = crate::sources::claude::ClaudeAdapter::with_roots(vec![root_a, root_b])
+            .collect(&crate::sources::CollectContext {
+                date,
+                config: None,
+                include_automated: false,
+            })
+            .expect("adapter collect");
+        std::fs::remove_dir_all(&base).ok();
+
+        let adapter_tasks: Vec<_> = collection.sessions.iter().map(|s| &s.task).collect();
+        assert_same_tasks(&legacy_tasks, &adapter_tasks);
+        assert_eq!(legacy_tasks.len(), 2);
+        assert_eq!(collection.fingerprint.entry_count, legacy_entries.len());
+    }
+
     #[test]
     fn test_collect_codex_sessions_merges_by_session_id_across_roots() {
         let date = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).expect("date");
