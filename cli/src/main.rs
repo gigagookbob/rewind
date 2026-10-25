@@ -20,8 +20,8 @@ use clap::Parser;
 use cli::{AuthAction, Commands};
 
 use commands::{
-    parse_date_flag, run_slack, run_summary, run_today, run_worker, send_notification,
-    spawn_worker, worker_log_path,
+    parse_date_flag, run_slack, run_summary, run_today, run_today_dry_run, run_worker,
+    send_notification, spawn_worker, worker_log_path,
 };
 
 #[tokio::main]
@@ -46,6 +46,7 @@ async fn main() {
             background,
             no_cache,
             include_automated,
+            dry_run,
             worker,
         } => {
             let target_date = match parse_date_flag(&date) {
@@ -55,7 +56,10 @@ async fn main() {
                     std::process::exit(1);
                 }
             };
-            if worker {
+            if dry_run {
+                // Before config checks, language selection, and provider loading.
+                run_today_dry_run(verbose, target_date, include_automated);
+            } else if worker {
                 if let Err(e) = run_worker(lang, target_date, no_cache, include_automated).await {
                     let log_path = worker_log_path();
                     if let Some(parent) = log_path.parent() {

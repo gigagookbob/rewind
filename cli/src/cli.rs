@@ -11,6 +11,7 @@ Examples:
   rwd today                         Analyze and print results
   rwd today --no-cache              Force fresh analysis (ignore cache)
   rwd today -v                      Show detailed execution plan
+  rwd today --dry-run               List sessions to analyze without calling the LLM
   rwd today -b                      Run in background, notify when done
   rwd today --date 2026-04-09       Analyze a specific date
   rwd summary                       Summarize today's work and save to Obsidian
@@ -53,7 +54,8 @@ Examples:
   rwd today -v                 Show detailed execution plan
   rwd today -b                 Run in background, notify when done
   rwd today --date 2026-04-09  Analyze a specific date
-  rwd today --include-automated  Include automated Claude sessions")]
+  rwd today --include-automated  Include automated Claude sessions
+  rwd today --dry-run          List sessions to analyze without calling the LLM")]
     Today {
         /// Show detailed execution plan per session
         #[arg(long, short)]
@@ -73,6 +75,9 @@ Examples:
         /// Include automated Claude sessions (default excludes them)
         #[arg(long)]
         include_automated: bool,
+        /// List the sessions that would be analyzed without calling the LLM
+        #[arg(long, conflicts_with_all = ["background", "worker"])]
+        dry_run: bool,
         /// Internal: run as background worker (hidden from help)
         #[arg(long, hide = true)]
         worker: bool,
@@ -164,6 +169,33 @@ mod tests {
         assert!(parsed.is_ok());
         if let Ok(cli) = parsed {
             assert!(matches!(cli.command, Commands::Version));
+        }
+    }
+
+    #[test]
+    fn test_parse_today_dry_run() {
+        let parsed = Cli::try_parse_from(["rwd", "today", "--dry-run", "-v"]);
+        assert!(parsed.is_ok());
+        if let Ok(cli) = parsed {
+            assert!(matches!(
+                cli.command,
+                Commands::Today {
+                    dry_run: true,
+                    verbose: true,
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn test_parse_today_dry_run_rejects_background_and_worker() {
+        for flag in ["-b", "--background", "--worker"] {
+            let parsed = Cli::try_parse_from(["rwd", "today", "--dry-run", flag]);
+            assert!(parsed.is_err(), "--dry-run {flag} should be rejected");
+            if let Err(err) = parsed {
+                assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+            }
         }
     }
 

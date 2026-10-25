@@ -117,7 +117,7 @@ cargo test --locked
 
 - [x] 공통 세 명령과 `cargo fmt --check` 통과
 - [x] 명세 1단계 완료 조건 1~5를 하나씩 확인
-- [ ] 사용자와 함께 결과를 보고 1단계 PR 여부 결정
+- [x] 사용자와 함께 결과를 보고 1단계 PR 여부 결정
 
 ## 2단계: 확인 옵션
 
@@ -126,14 +126,14 @@ cargo test --locked
 **설명:** `today`에 `--dry-run`을 추가합니다. `-b`, `--worker`와 함께 쓰면 clap이 오류를 냅니다. `main.rs`는 `--dry-run`이면 설정 확인, 언어 선택, LLM 제공자 불러오기 전에 별도 함수로 갑니다. 이 함수는 어댑터 목록과 수집 조건만 받아 수집하고, 정보 상자 다음에 출처별 세션 목록(세션 ID 앞 8자리, 시각 범위, 사용자와 답변 수, 예상 토큰)과 뺀 세션 수를 출력하고 끝납니다. 출력 글은 순수 함수가 만들고 화면 출력만 따로 합니다. 설정 파일이 없으면 기본 경로만 봅니다.
 
 **수용 기준:**
-- [ ] clap 파싱 테스트: `rwd today --dry-run`은 통과하고, `rwd today --dry-run -b`는 오류입니다.
-- [ ] 출력 함수 테스트: 세션 글에 넣은 표식 문자열이 출력에 없고, 세션 수, 뺀 세션 수, `LLM을 부르지 않았다`는 안내가 있습니다.
-- [ ] 설정 없이(`config: None`) 임시 폴더 어댑터로 확인 함수를 부르면 오류 없이 끝납니다. 확인 함수는 LLM 제공자, 캐시, Markdown 저장 함수를 인자로 받지 않고 부르지도 않습니다(코드 검토로 확인).
+- [x] clap 파싱 테스트: `rwd today --dry-run`은 통과하고, `rwd today --dry-run -b`는 오류입니다.
+- [x] 출력 함수 테스트: 세션 글에 넣은 표식 문자열이 출력에 없고, 세션 수, 뺀 세션 수, `LLM을 부르지 않았다`는 안내가 있습니다.
+- [x] 설정 없이(`config: None`) 임시 폴더 어댑터로 확인 함수를 부르면 오류 없이 끝납니다. 확인 함수는 LLM 제공자, 캐시, Markdown 저장 함수를 인자로 받지 않고 부르지도 않습니다(코드 검토로 확인).
 
 **확인:**
-- [ ] `cargo test --locked cli`, `cargo test --locked commands`
-- [ ] `cargo run -- today --dry-run`과 `cargo run -- today --dry-run -v`를 이 컴퓨터에서 직접 실행해, Claude Code와 Codex 세션 목록이 나오고 분석 안내 문구(`Analyzing...`)가 나오지 않는지 봅니다
-- [ ] 공통 세 명령
+- [x] `cargo test --locked cli`, `cargo test --locked commands`
+- [x] `cargo run -- today --dry-run`과 `cargo run -- today --dry-run -v`를 이 컴퓨터에서 직접 실행해, Claude Code와 Codex 세션 목록이 나오고 분석 안내 문구(`Analyzing...`)가 나오지 않는지 봅니다
+- [x] 공통 세 명령
 
 **의존:** 작업 4
 
@@ -148,7 +148,7 @@ cargo test --locked
 
 ### 확인 지점 2: 2단계 끝
 
-- [ ] 명세 2단계 완료 조건 1~3을 하나씩 확인
+- [x] 명세 2단계 완료 조건 1~3을 하나씩 확인
 - [ ] 사용자와 함께 결과를 보고 2단계 PR 여부 결정
 
 ## 3단계: Antigravity 어댑터

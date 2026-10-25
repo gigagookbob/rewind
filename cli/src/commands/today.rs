@@ -1,9 +1,9 @@
 //! Collect, analyze, cache, and save a day of sessions.
 
-use super::collection::collect_sources;
+use super::collection::{CollectionRun, collect_sources};
 use super::display::{
-    GREEN, MAGENTA, RESET, YELLOW, format_roots_for_display, print_info_box, print_insights,
-    print_logo_banner,
+    GREEN, MAGENTA, RESET, YELLOW, format_roots_for_display, print_dry_run, print_info_box,
+    print_insights, print_logo_banner,
 };
 use super::resolve_lang;
 use crate::{analyzer, cache, config, output, parser, redactor, sources};
@@ -38,41 +38,7 @@ pub(crate) async fn run_today(
         },
     );
 
-    for (source_name, error) in &run.failures {
-        eprintln!(
-            "{YELLOW}{}{RESET}",
-            crate::messages::status::source_collect_failed(source_name, error)
-        );
-    }
-
-    if verbose {
-        for source in &run.sources {
-            for line in &source.collection.verbose_lines {
-                eprintln!("{line}");
-            }
-            for (reason, count) in &source.collection.excluded {
-                if *count > 0 {
-                    eprintln!(
-                        "{}",
-                        crate::messages::verbose::excluded_sessions(
-                            source.display_name,
-                            reason,
-                            *count
-                        )
-                    );
-                }
-            }
-            if !source.collection.roots.is_empty() {
-                eprintln!(
-                    "{}",
-                    crate::messages::verbose::used_roots(
-                        source.display_name,
-                        &format_roots_for_display(&source.collection.roots)
-                    )
-                );
-            }
-        }
-    }
+    print_collection_notes(&run, verbose);
 
     if run.session_count() == 0 {
         println!("No log entries found for today ({today}).");
@@ -208,6 +174,80 @@ pub(crate) async fn run_today(
     Ok(())
 }
 
+/// `rwd today --dry-run`: collects sessions and lists them without touching
+/// the LLM provider, cache, or Markdown output. Works without a config file
+/// (adapters then look only at their default log roots).
+pub(crate) fn run_today_dry_run(
+    verbose: bool,
+    target_date: chrono::NaiveDate,
+    include_automated_flag: bool,
+) {
+    let loaded_config = config::load_config_if_exists();
+    let adapters = sources::registered_adapters();
+    dry_run(
+        &adapters,
+        &sources::CollectContext {
+            date: target_date,
+            config: loaded_config.as_ref(),
+            include_automated: include_automated_flag,
+        },
+        verbose,
+    );
+}
+
+/// Collects from `adapters` and prints the dry-run report. Takes only the
+/// adapter list and collection inputs, so it cannot reach the LLM, the cache,
+/// or the vault.
+fn dry_run(
+    adapters: &[Box<dyn sources::SourceAdapter>],
+    ctx: &sources::CollectContext,
+    verbose: bool,
+) -> CollectionRun {
+    let run = collect_sources(adapters, ctx);
+    print_collection_notes(&run, verbose);
+    print_dry_run(ctx.date, &run.sources);
+    run
+}
+
+/// Prints adapter failures, and with `-v` each source's diagnostics.
+fn print_collection_notes(run: &CollectionRun, verbose: bool) {
+    for (source_name, error) in &run.failures {
+        eprintln!(
+            "{YELLOW}{}{RESET}",
+            crate::messages::status::source_collect_failed(source_name, error)
+        );
+    }
+
+    if verbose {
+        for source in &run.sources {
+            for line in &source.collection.verbose_lines {
+                eprintln!("{line}");
+            }
+            for (reason, count) in &source.collection.excluded {
+                if *count > 0 {
+                    eprintln!(
+                        "{}",
+                        crate::messages::verbose::excluded_sessions(
+                            source.display_name,
+                            reason,
+                            *count
+                        )
+                    );
+                }
+            }
+            if !source.collection.roots.is_empty() {
+                eprintln!(
+                    "{}",
+                    crate::messages::verbose::used_roots(
+                        source.display_name,
+                        &format_roots_for_display(&source.collection.roots)
+                    )
+                );
+            }
+        }
+    }
+}
+
 /// Combines analysis results from multiple sources and saves as Markdown.
 fn save_combined_analysis(
     sources: &[(&str, &analyzer::AnalysisResult)],
@@ -241,5 +281,73 @@ fn save_combined_analysis(
             }
         }
         Err(e) => eprintln!("{}", crate::messages::error::file_save_failed(&e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sources::claude::ClaudeAdapter;
+    use crate::sources::codex::CodexAdapter;
+
+    fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ))
+    }
+
+    fn list_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut found = Vec::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(&dir).expect("read dir").flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    pending.push(path.clone());
+                }
+                found.push(path);
+            }
+        }
+        found.sort();
+        found
+    }
+
+    #[test]
+    fn test_dry_run_collects_without_config_and_writes_nothing() {
+        let base = unique_temp_dir("rwd_test_today_dry_run");
+        let claude_root = base.join("claude");
+        let codex_root = base.join("codex");
+        std::fs::create_dir_all(claude_root.join("project-a")).expect("claude project");
+        std::fs::create_dir_all(&codex_root).expect("codex root");
+        std::fs::write(
+            claude_root.join("project-a/session.jsonl"),
+            concat!(
+                r#"{"type":"user","sessionId":"claude-s1","timestamp":"2099-01-01T12:00:00Z","uuid":"u1","message":{"role":"user","content":"hello"}}"#,
+                "\n",
+            ),
+        )
+        .expect("write log");
+        let before = list_files(&base);
+
+        let adapters: Vec<Box<dyn sources::SourceAdapter>> = vec![
+            Box::new(ClaudeAdapter::with_roots(vec![claude_root])),
+            Box::new(CodexAdapter::with_roots(vec![codex_root])),
+        ];
+        let ctx = sources::CollectContext {
+            date: chrono::NaiveDate::from_ymd_opt(2099, 1, 1).expect("date"),
+            config: None,
+            include_automated: false,
+        };
+        let run = dry_run(&adapters, &ctx, true);
+        let after = list_files(&base);
+        std::fs::remove_dir_all(&base).ok();
+
+        assert!(run.failures.is_empty());
+        assert_eq!(run.session_count(), 1);
+        assert_eq!(before, after);
     }
 }

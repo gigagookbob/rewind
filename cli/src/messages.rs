@@ -418,6 +418,48 @@ pub mod display {
     pub const NO_SESSIONS: &str = "No sessions";
 }
 
+/// Lines for `rwd today --dry-run`. Never include conversation text here.
+pub mod dry_run {
+    pub const LLM_NOT_CALLED: &str = "LLM was not called. Run without --dry-run to analyze.";
+
+    pub fn source_heading(source: &str, roots: &str) -> String {
+        format!("{source}  {roots}")
+    }
+
+    pub fn no_roots(source: &str) -> String {
+        format!("{source}  (no log folder found)")
+    }
+
+    pub fn session_row(
+        short_id: &str,
+        time_range: &str,
+        user_messages: usize,
+        assistant_messages: usize,
+        estimated_tokens: &str,
+    ) -> String {
+        format!(
+            "  {short_id}  {time_range}  user {user_messages}  assistant {assistant_messages}  ~{estimated_tokens} tokens"
+        )
+    }
+
+    pub fn excluded_item(reason: &str, count: usize) -> String {
+        format!("{count} {reason}")
+    }
+
+    /// `excluded` is the joined `excluded_item` list; empty when the source drops nothing.
+    pub fn source_summary(sessions: usize, excluded: &str) -> String {
+        if excluded.is_empty() {
+            format!("  {sessions} session(s)")
+        } else {
+            format!("  {sessions} session(s), excluded: {excluded}")
+        }
+    }
+
+    pub fn total(sessions: usize) -> String {
+        format!("Total: {sessions} session(s) would be analyzed.")
+    }
+}
+
 /// Markdown section headers used in `src/output/markdown.rs`.
 /// English translations of the current Korean headers — Task 2 will
 /// replace the Korean literals with these constants.
