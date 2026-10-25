@@ -148,6 +148,29 @@ fn optional_non_empty_string(value: &serde_json::Value) -> Option<String> {
 /// whose `recipient` is their own `agent_path` (SPEC.md, stage 4).
 const PAYLOAD_AGENT_MESSAGE: &str = "agent_message";
 
+/// `session_meta` fields sent as the `[META]` line: where the session ran.
+/// Verified on 141 local `session_meta` lines: the rest is Codex's own
+/// `base_instructions` (~21,500 chars each), account and window ids,
+/// versions, and timestamps (SPEC.md, Codex prompt text).
+const SESSION_META_PROMPT_FIELDS: [&str; 6] = [
+    "/cwd",
+    "/git/branch",
+    "/git/repository_url",
+    "/id",
+    "/model_provider",
+    // A subagent's `source` is an object; only the string form is kept.
+    "/source",
+];
+
+fn session_meta_text(payload: &serde_json::Value) -> String {
+    let parts: Vec<String> = SESSION_META_PROMPT_FIELDS
+        .iter()
+        .filter_map(|pointer| payload.pointer(pointer)?.as_str())
+        .map(str::to_string)
+        .collect();
+    join_unique_lines(&parts)
+}
+
 /// Reads one string field of `source.subagent.thread_spawn`.
 fn thread_spawn_field(payload: &serde_json::Value, field: &str) -> Option<String> {
     payload
@@ -238,7 +261,7 @@ impl CodexEntry {
                     agent_nickname,
                     parent_thread_id: thread_spawn_field(payload, "parent_thread_id"),
                     agent_path: thread_spawn_field(payload, "agent_path"),
-                    text: payload_text.clone(),
+                    text: session_meta_text(payload),
                 }
             }
             // Other payload strings (`images` data URLs, local file paths,
@@ -741,6 +764,33 @@ mod tests {
             assert_eq!(session_id, "sess-abc");
             assert_eq!(cwd, "/home/user/project");
             assert_eq!(model_provider, "openai");
+        } else {
+            panic!("Expected SessionMeta variant");
+        }
+    }
+
+    #[test]
+    fn test_parse_session_meta_text_keeps_only_session_context() {
+        let json = r#"{"timestamp":"2026-10-25T09:00:00Z","type":"session_meta","payload":{"id":"sess-abc","session_id":"sess-abc","timestamp":"2026-10-25T09:00:00Z","cwd":"/home/user/project","originator":"Codex Desktop","cli_version":"0.164.0","source":"vscode","thread_source":"user","model_provider":"openai","creator_account_id":"acct-marker","creator_user_id":"user-marker","context_window":{"window_id":"window-marker"},"history_mode":"paginated","runtime_workspace_roots":["/home/user/other"],"base_instructions":{"text":"You are Codex. INSTRUCTIONS-MARKER","provenance":{"type":"model","model":"gpt-5.5"}},"git":{"commit_hash":"0123456789abcdef0123456789abcdef01234567","branch":"feat/login","repository_url":"https://github.com/example/project.git"}}}"#;
+        let entry = CodexEntry::from_raw(serde_json::from_str(json).unwrap());
+
+        if let CodexEntry::SessionMeta { text, .. } = entry {
+            assert_eq!(
+                text,
+                "/home/user/project\nfeat/login\nhttps://github.com/example/project.git\nsess-abc\nopenai\nvscode"
+            );
+        } else {
+            panic!("Expected SessionMeta variant");
+        }
+    }
+
+    #[test]
+    fn test_parse_session_meta_text_skips_object_source() {
+        let json = r#"{"timestamp":"2026-10-25T09:00:00Z","type":"session_meta","payload":{"id":"sess-sub","cwd":"/project","model_provider":"openai","source":{"subagent":{"thread_spawn":{"parent_thread_id":"sess-parent","agent_path":"/root/ada"}}}}}"#;
+        let entry = CodexEntry::from_raw(serde_json::from_str(json).unwrap());
+
+        if let CodexEntry::SessionMeta { text, .. } = entry {
+            assert_eq!(text, "/project\nsess-sub\nopenai");
         } else {
             panic!("Expected SessionMeta variant");
         }
