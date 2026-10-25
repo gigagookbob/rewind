@@ -48,8 +48,8 @@
 
 ### 확인 지점 1: 1단계 끝
 
-- [ ] 전체 테스트, Clippy, `cargo fmt --check` 통과
-- [ ] `commands/`와 `doctor.rs`의 테스트가 아닌 코드에 `parser::claude`, `parser::codex` 참조가 0줄
+- [x] 전체 테스트, Clippy, `cargo fmt --check` 통과
+- [x] `commands/`와 `doctor.rs`의 테스트가 아닌 코드에 `parser::claude`, `parser::codex` 참조가 0줄
 - [ ] 사용자와 함께 1단계 결과 검토, 1단계 PR
 
 ### 2단계: 확인 옵션
