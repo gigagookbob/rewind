@@ -3,9 +3,11 @@
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::analyzer::insight::AnalysisResult;
+use crate::sources::SourceFingerprint;
 
 pub type CacheError = Box<dyn std::error::Error>;
 
@@ -21,14 +23,12 @@ pub struct UpdateCheckCache {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TodayCache {
     pub date: String,
-    pub claude_entry_count: usize,
-    pub codex_session_count: usize,
-    /// Total parsed Codex entries for the target date.
+    /// Per-source counts keyed by adapter id. Sources with no sessions are left out.
     ///
-    /// Added after `codex_session_count` to avoid false cache hits when
-    /// conversations continue inside existing sessions.
+    /// Legacy caches stored fixed Claude/Codex counts instead; they load with an
+    /// empty table, never match, and are re-analyzed once.
     #[serde(default)]
-    pub codex_entry_count: usize,
+    pub source_fingerprints: FingerprintTable,
     /// Local-day UTC window key for cache safety across timezone changes.
     ///
     /// Format: "<start_utc_rfc3339>..<end_utc_rfc3339>".
@@ -37,6 +37,36 @@ pub struct TodayCache {
     pub timezone_window_key: Option<String>,
     /// Per-source analysis results.
     pub sources: Vec<(String, AnalysisResult)>,
+}
+
+/// Source fingerprints keyed by adapter id, in stable order for JSON output.
+pub type FingerprintTable = BTreeMap<String, SourceFingerprint>;
+
+/// Builds the table compared against the cache.
+///
+/// Sources with zero sessions are skipped, so an adapter that found nothing
+/// (e.g. a newly added agent) does not invalidate existing caches.
+pub fn fingerprint_table<'a>(
+    items: impl IntoIterator<Item = (&'a str, &'a SourceFingerprint)>,
+) -> FingerprintTable {
+    items
+        .into_iter()
+        .filter(|(_, fingerprint)| fingerprint.session_count > 0)
+        .map(|(id, fingerprint)| (id.to_string(), fingerprint.clone()))
+        .collect()
+}
+
+/// Returns whether cached analysis covers exactly the current sessions.
+pub fn fingerprints_match(cache: &TodayCache, current: &FingerprintTable) -> bool {
+    cache.source_fingerprints == *current
+}
+
+/// Sums entry counts across sources (for stale-cache messages).
+pub fn total_entry_count(table: &FingerprintTable) -> usize {
+    table
+        .values()
+        .map(|fingerprint| fingerprint.entry_count)
+        .sum()
 }
 
 /// Returns a timezone-aware cache identity for a local date.
@@ -132,11 +162,16 @@ mod tests {
     fn empty_today_cache(date: &str, timezone_window_key: Option<String>) -> TodayCache {
         TodayCache {
             date: date.to_string(),
-            claude_entry_count: 0,
-            codex_session_count: 0,
-            codex_entry_count: 0,
+            source_fingerprints: FingerprintTable::new(),
             timezone_window_key,
             sources: Vec::new(),
+        }
+    }
+
+    fn fingerprint(session_count: usize, entry_count: usize) -> SourceFingerprint {
+        SourceFingerprint {
+            session_count,
+            entry_count,
         }
     }
 
@@ -180,16 +215,53 @@ mod tests {
     }
 
     #[test]
-    fn test_today_cache_deserialize_legacy_json_defaults_codex_entry_count() {
+    fn test_legacy_cache_json_loads_without_fingerprints_and_never_matches() {
         let json = r#"{
   "date":"2026-04-11",
   "claude_entry_count":10,
   "codex_session_count":2,
+  "codex_entry_count":7,
   "sources":[]
 }"#;
         let loaded: TodayCache = serde_json::from_str(json).expect("deserialize legacy cache");
-        assert_eq!(loaded.codex_entry_count, 0);
+        assert!(loaded.source_fingerprints.is_empty());
         assert!(loaded.timezone_window_key.is_none());
+
+        let claude = fingerprint(1, 10);
+        let codex = fingerprint(2, 7);
+        let current = fingerprint_table([("claude", &claude), ("codex", &codex)]);
+        assert!(!fingerprints_match(&loaded, &current));
+    }
+
+    #[test]
+    fn test_new_cache_json_roundtrip_keeps_fingerprints_matching() {
+        let claude = fingerprint(2, 40);
+        let codex = fingerprint(1, 9);
+        let current = fingerprint_table([("claude", &claude), ("codex", &codex)]);
+        let mut cache = empty_today_cache("2026-04-11", Some("key".to_string()));
+        cache.source_fingerprints = current.clone();
+
+        let json = serde_json::to_string_pretty(&cache).expect("serialize");
+        let loaded: TodayCache = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(loaded.source_fingerprints, current);
+        assert!(fingerprints_match(&loaded, &current));
+        assert_eq!(total_entry_count(&loaded.source_fingerprints), 49);
+
+        let grown = fingerprint(1, 10);
+        let changed = fingerprint_table([("claude", &claude), ("codex", &grown)]);
+        assert!(!fingerprints_match(&loaded, &changed));
+    }
+
+    #[test]
+    fn test_fingerprint_table_skips_sources_without_sessions() {
+        let claude = fingerprint(1, 3);
+        let empty = fingerprint(0, 0);
+        let table = fingerprint_table([("claude", &claude), ("antigravity", &empty)]);
+
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.get("claude"), Some(&claude));
+        assert!(!table.contains_key("antigravity"));
     }
 
     #[test]

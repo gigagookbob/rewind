@@ -206,19 +206,6 @@ pub fn build_codex_session_task(
     })
 }
 
-/// Main entry point for Claude log analysis.
-pub async fn analyze_entries(
-    entries: &[LogEntry],
-    redactor_enabled: bool,
-    verbose: bool,
-    lang: &crate::config::Lang,
-    scope_label: &str,
-    context: &SessionAnalysisContext,
-) -> Result<(AnalysisResult, RedactResult), AnalyzerError> {
-    let tasks = build_claude_session_tasks(entries)?;
-    analyze_session_tasks(tasks, redactor_enabled, verbose, lang, scope_label, context).await
-}
-
 /// Shared session analysis pipeline used by both Claude and Codex inputs.
 pub async fn analyze_session_tasks(
     tasks: Vec<SessionTask>,

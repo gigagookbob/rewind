@@ -1,9 +1,9 @@
 //! Summary and Slack text workflows built from cached daily analyses.
 
-use super::collection::{claude_include_automated, collect_claude_entries, collect_codex_sessions};
+use super::collection::collect_sources;
 use super::display::{RESET, YELLOW};
 use super::{resolve_lang, run_today};
-use crate::{analyzer, cache, config, output};
+use crate::{analyzer, cache, config, output, sources};
 
 /// Loads today's analysis cache, running the full analysis first when the
 /// cache is missing or stale for the current timezone rules.
@@ -116,23 +116,21 @@ pub(crate) async fn run_slack(
 
     let cached = load_cache_or_analyze(today).await?;
 
-    // Warn if cache is stale (entry count mismatch).
+    // Warn if cache is stale (source fingerprint mismatch).
     let mut loaded_config = config::load_config_if_exists();
-    let include_automated = claude_include_automated(loaded_config.as_ref());
-    let claude_count =
-        collect_claude_entries(today, loaded_config.as_ref(), include_automated).len();
-    let (codex_sessions, _) = collect_codex_sessions(today, loaded_config.as_ref());
-    let codex_session_count = codex_sessions.len();
-    let codex_entry_count: usize = codex_sessions
-        .iter()
-        .map(|(_, entries)| entries.len())
-        .sum();
-    if cached.claude_entry_count != claude_count
-        || cached.codex_session_count != codex_session_count
-        || cached.codex_entry_count != codex_entry_count
-    {
-        let cached_total = cached.claude_entry_count + cached.codex_entry_count;
-        let current_total = claude_count + codex_entry_count;
+    let adapters = sources::registered_adapters();
+    let run = collect_sources(
+        &adapters,
+        &sources::CollectContext {
+            date: today,
+            config: loaded_config.as_ref(),
+            include_automated: false,
+        },
+    );
+    let current = run.fingerprint_table();
+    if !cache::fingerprints_match(&cached, &current) {
+        let cached_total = cache::total_entry_count(&cached.source_fingerprints);
+        let current_total = cache::total_entry_count(&current);
         eprintln!(
             "{YELLOW}{}{RESET}",
             crate::messages::status::cache_stale(cached_total, current_total)

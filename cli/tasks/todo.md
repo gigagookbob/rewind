@@ -66,15 +66,15 @@ cargo test --locked
 **설명:** `commands/`가 어댑터 목록만 쓰도록 바꿉니다. `commands/collection.rs`에는 어댑터 목록을 인자로 받아 켜진 어댑터를 차례로 부르고, 실패한 어댑터는 이름과 함께 경고로 바꾸는 함수 하나만 남깁니다. 옛 Claude, Codex 수집 함수와 작업 1, 2의 비교 테스트는 지웁니다. `run_today`는 출처별 결과로 정보 상자, 캐시 비교, 분석, 캐시 저장을 합니다. `TodayCache`는 `source_fingerprints` 표로 바꾸고, 표가 없는 예전 캐시는 맞지 않는 것으로 봅니다. `run_slack`의 낡은 캐시 확인도 지문 표를 씁니다. 정보 상자는 출처마다 칸 하나를 그리고, 출처별 활동 시각 함수는 지웁니다.
 
 **수용 기준:**
-- [ ] `cache.rs` 테스트: 예전 형식 캐시 JSON은 지문이 맞지 않는 것으로 판단하고, 새 형식은 저장하고 다시 읽어도 같으며, 세션이 0개인 출처는 지문 표에 들어가지 않습니다.
-- [ ] 가짜 어댑터 하나가 `Err`를 돌려줘도 다른 가짜 어댑터의 세션이 결과에 들어가고, 실패한 출처 이름이 경고 목록에 남는 테스트가 통과합니다.
-- [ ] `src/commands/`의 테스트가 아닌 코드에 `parser::claude`, `parser::codex` 참조가 없습니다. 정보 상자 칸을 만드는 함수 테스트에서, 폴더는 있지만 세션이 없는 출처는 `No sessions` 칸이 되고 폴더가 없는 출처는 칸이 없습니다.
+- [x] `cache.rs` 테스트: 예전 형식 캐시 JSON은 지문이 맞지 않는 것으로 판단하고, 새 형식은 저장하고 다시 읽어도 같으며, 세션이 0개인 출처는 지문 표에 들어가지 않습니다.
+- [x] 가짜 어댑터 하나가 `Err`를 돌려줘도 다른 가짜 어댑터의 세션이 결과에 들어가고, 실패한 출처 이름이 경고 목록에 남는 테스트가 통과합니다.
+- [x] `src/commands/`의 테스트가 아닌 코드에 `parser::claude`, `parser::codex` 참조가 없습니다. 정보 상자 칸을 만드는 함수 테스트에서, 폴더는 있지만 세션이 없는 출처는 `No sessions` 칸이 되고 폴더가 없는 출처는 칸이 없습니다.
 
 **확인:**
-- [ ] `cargo test --locked cache`, `cargo test --locked commands`
-- [ ] 작업 1, 2의 고정 테스트(`sources::claude`, `sources::codex`)가 그대로 통과
-- [ ] `grep -n "parser::claude\|parser::codex" src/commands/*.rs`에 테스트 모듈 밖의 결과가 없음
-- [ ] 공통 세 명령
+- [x] `cargo test --locked cache`, `cargo test --locked commands`
+- [x] 작업 1, 2의 고정 테스트(`sources::claude`, `sources::codex`)가 그대로 통과
+- [x] `grep -n "parser::claude\|parser::codex" src/commands/*.rs`에 테스트 모듈 밖의 결과가 없음
+- [x] 공통 세 명령
 
 **의존:** 작업 1, 2
 

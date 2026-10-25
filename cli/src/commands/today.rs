@@ -1,14 +1,12 @@
 //! Collect, analyze, cache, and save a day of sessions.
 
-use super::collection::{
-    claude_include_automated, collect_claude_entries_with_stats, collect_codex_sessions,
-};
+use super::collection::collect_sources;
 use super::display::{
     GREEN, MAGENTA, RESET, YELLOW, format_roots_for_display, print_info_box, print_insights,
     print_logo_banner,
 };
 use super::resolve_lang;
-use crate::{analyzer, cache, config, output, parser, redactor};
+use crate::{analyzer, cache, config, output, parser, redactor, sources};
 
 /// Parses session logs for the given date, runs LLM analysis, and prints insights.
 pub(crate) async fn run_today(
@@ -28,92 +26,72 @@ pub(crate) async fn run_today(
         .map_err(|e| -> Box<dyn std::error::Error> { e })?;
 
     let today = target_date;
-    let include_automated =
-        include_automated_flag || claude_include_automated(loaded_config.as_ref());
 
-    // === Collect Claude Code logs ===
-    let (claude_entries, claude_discovery) =
-        collect_claude_entries_with_stats(today, loaded_config.as_ref(), include_automated);
+    // === Collect logs from every registered source ===
+    let adapters = sources::registered_adapters();
+    let run = collect_sources(
+        &adapters,
+        &sources::CollectContext {
+            date: today,
+            config: loaded_config.as_ref(),
+            include_automated: include_automated_flag,
+        },
+    );
 
-    // === Collect Codex logs ===
-    let (codex_sessions, codex_roots) = collect_codex_sessions(today, loaded_config.as_ref());
-
-    let codex_entry_count: usize = codex_sessions
-        .iter()
-        .map(|(_, entries)| entries.len())
-        .sum();
+    for (source_name, error) in &run.failures {
+        eprintln!(
+            "{YELLOW}{}{RESET}",
+            crate::messages::status::source_collect_failed(source_name, error)
+        );
+    }
 
     if verbose {
-        eprintln!(
-            "{}",
-            crate::messages::verbose::discover_stats(
-                claude_discovery.project_count,
-                claude_discovery.file_count,
-                claude_discovery.total_entries,
-                claude_entries.len() + codex_entry_count,
-            )
-        );
-        eprintln!(
-            "{}",
-            crate::messages::verbose::claude_session_mix(
-                claude_discovery.claude_interactive_sessions,
-                claude_discovery.claude_automated_sessions,
-                include_automated,
-            )
-        );
-        if !claude_discovery.roots.is_empty() {
-            eprintln!(
-                "{}",
-                crate::messages::verbose::used_roots(
-                    "Claude",
-                    &format_roots_for_display(&claude_discovery.roots)
-                )
-            );
-        }
-        if !codex_roots.is_empty() {
-            eprintln!(
-                "{}",
-                crate::messages::verbose::used_roots(
-                    "Codex",
-                    &format_roots_for_display(&codex_roots)
-                )
-            );
+        for source in &run.sources {
+            for line in &source.collection.verbose_lines {
+                eprintln!("{line}");
+            }
+            for (reason, count) in &source.collection.excluded {
+                if *count > 0 {
+                    eprintln!(
+                        "{}",
+                        crate::messages::verbose::excluded_sessions(
+                            source.display_name,
+                            reason,
+                            *count
+                        )
+                    );
+                }
+            }
+            if !source.collection.roots.is_empty() {
+                eprintln!(
+                    "{}",
+                    crate::messages::verbose::used_roots(
+                        source.display_name,
+                        &format_roots_for_display(&source.collection.roots)
+                    )
+                );
+            }
         }
     }
 
-    if claude_entries.is_empty() && codex_sessions.is_empty() {
+    if run.session_count() == 0 {
         println!("No log entries found for today ({today}).");
         return Ok(());
     }
-
-    let claude_count = claude_entries.len();
-    let codex_session_count = codex_sessions.len();
 
     // === Logo banner ===
     print_logo_banner();
 
     // === Info box ===
-    let summaries = if !claude_entries.is_empty() {
-        Some(parser::summarize_entries(&claude_entries))
-    } else {
-        None
-    };
-
-    print_info_box(
-        today,
-        summaries.as_deref(),
-        &claude_entries,
-        &codex_sessions,
-    );
+    print_info_box(today, &run.sources);
 
     // === Cache check ===
-    // Reuse previous analysis if the entry count is unchanged.
+    // Reuse previous analysis if every source fingerprint is unchanged.
+    let fingerprints = run.fingerprint_table();
     if no_cache {
         println!("\n{}", crate::messages::status::CACHE_BYPASSED);
     } else if let Some(cached) = cache::load_cache(today) {
-        let count_matches = cached.claude_entry_count == claude_count
-            && cached.codex_session_count == codex_session_count
-            && cached.codex_entry_count == codex_entry_count;
+        let count_matches = cache::fingerprints_match(&cached, &fingerprints);
         let timezone_matches = cache::is_timezone_compatible(&cached, today);
 
         if count_matches && timezone_matches {
@@ -150,42 +128,31 @@ pub(crate) async fn run_today(
     );
 
     let analysis_context = analyzer::prepare_session_analysis_context().await?;
-    let mut sources: Vec<(String, analyzer::AnalysisResult)> = Vec::new();
+    let mut results: Vec<(String, analyzer::AnalysisResult)> = Vec::new();
     let mut total_redact = redactor::RedactResult::empty();
 
-    // Claude analysis
-    if !claude_entries.is_empty() {
-        let (result, redact_result) = analyzer::analyze_entries(
-            &claude_entries,
-            redactor_enabled,
-            verbose,
-            &lang,
-            "Claude Code",
-            &analysis_context,
-        )
-        .await?;
-        total_redact.merge(redact_result);
-        sources.push(("Claude Code".to_string(), result));
-    }
-
-    // Codex analysis — unified session pipeline (same executor as Claude).
-    if !codex_sessions.is_empty() {
-        let mut codex_tasks = Vec::new();
-        for (summary, entries) in &codex_sessions {
-            let task = analyzer::build_codex_session_task(entries, &summary.session_id)?;
-            codex_tasks.push(task);
+    // One shared session pipeline per source, in adapter order.
+    for source in run.sources {
+        if source.collection.sessions.is_empty() {
+            continue;
         }
+        let tasks = source
+            .collection
+            .sessions
+            .into_iter()
+            .map(|session| session.task)
+            .collect();
         let (result, redact_result) = analyzer::analyze_session_tasks(
-            codex_tasks,
+            tasks,
             redactor_enabled,
             verbose,
             &lang,
-            "Codex",
+            source.display_name,
             &analysis_context,
         )
         .await?;
         total_redact.merge(redact_result);
-        sources.push(("Codex".to_string(), result));
+        results.push((source.display_name.to_string(), result));
     }
 
     // Output and save results
@@ -199,8 +166,8 @@ pub(crate) async fn run_today(
         );
     }
 
-    if !sources.is_empty() {
-        let source_refs: Vec<(&str, &analyzer::AnalysisResult)> = sources
+    if !results.is_empty() {
+        let source_refs: Vec<(&str, &analyzer::AnalysisResult)> = results
             .iter()
             .map(|(name, result)| (name.as_str(), result))
             .collect();
@@ -212,11 +179,9 @@ pub(crate) async fn run_today(
         // Save analysis results to cache.
         let cache_data = cache::TodayCache {
             date: today.to_string(),
-            claude_entry_count: claude_count,
-            codex_session_count,
-            codex_entry_count,
+            source_fingerprints: fingerprints,
             timezone_window_key: cache::timezone_window_key(today),
-            sources,
+            sources: results,
         };
         if let Err(e) = cache::save_cache(&cache_data, today) {
             eprintln!("{}", crate::messages::error::cache_save_failed(&e));
