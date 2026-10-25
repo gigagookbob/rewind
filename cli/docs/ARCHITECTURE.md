@@ -63,7 +63,13 @@ rwd/
 │   │   ├── display.rs   # 터미널 표시와 활동 시간 집계
 │   │   └── background.rs# 백그라운드 프로세스, 잠금과 알림
 │   ├── messages.rs      # Centralized user-facing strings
-│   ├── config.rs        # Config file management
+│   ├── config.rs        # 설정 타입, 파일 저장, 이전 형식 변환과 값 해석
+│   ├── config/
+│   │   ├── commands.rs  # 초기 설정과 명령으로 설정값 변경
+│   │   ├── interactive.rs # 대화형 설정 메뉴와 입력 취소
+│   │   ├── auth.rs      # 인증 상태 확인, 키 검증과 마스킹
+│   │   ├── vault.rs     # Obsidian 경로 탐색과 WSL 경로 처리
+│   │   └── reset.rs     # 설정, 캐시와 worker 상태 초기화
 │   ├── parser/          # Log parsing modules
 │   │   ├── mod.rs
 │   │   ├── claude.rs    # Claude Code log parser
