@@ -1,7 +1,7 @@
 //! Terminal rendering and session statistics used by the information box.
 
-use super::collection::CodexCollectedSession;
-use crate::{analyzer, parser};
+use super::collection::CollectedSource;
+use crate::analyzer;
 
 // ANSI color codes — visible on both light and dark terminals.
 const CYAN: &str = "\x1b[36m";
@@ -13,77 +13,15 @@ const RED: &str = "\x1b[31m";
 pub(super) const GREEN: &str = "\x1b[32m";
 pub(super) const RESET: &str = "\x1b[0m";
 
+/// Info box heading colors, assigned by adapter order (Claude Code, Codex, ...).
+const SOURCE_HEADING_COLORS: &[&str] = &[BRIGHT_BLUE, YELLOW, MAGENTA, CYAN];
+
 pub(super) fn format_roots_for_display(roots: &[std::path::PathBuf]) -> String {
     roots
         .iter()
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-/// Returns the earliest local timestamp from Claude entries.
-fn claude_earliest_time(
-    entries: &[parser::claude::LogEntry],
-) -> Option<chrono::DateTime<chrono::Local>> {
-    entries
-        .iter()
-        .filter_map(parser::claude::entry_timestamp)
-        .min()
-        .map(|ts| ts.with_timezone(&chrono::Local))
-}
-
-/// Returns the latest local timestamp from Claude entries.
-fn claude_latest_time(
-    entries: &[parser::claude::LogEntry],
-) -> Option<chrono::DateTime<chrono::Local>> {
-    entries
-        .iter()
-        .filter_map(parser::claude::entry_timestamp)
-        .max()
-        .map(|ts| ts.with_timezone(&chrono::Local))
-}
-
-/// Returns the earliest local timestamp from Codex sessions.
-fn codex_earliest_time(
-    sessions: &[CodexCollectedSession],
-) -> Option<chrono::DateTime<chrono::Local>> {
-    codex_activity_timestamps(sessions)
-        .min()
-        .map(|ts| ts.with_timezone(&chrono::Local))
-}
-
-/// Returns the latest local timestamp from Codex sessions.
-fn codex_latest_time(
-    sessions: &[CodexCollectedSession],
-) -> Option<chrono::DateTime<chrono::Local>> {
-    codex_activity_timestamps(sessions)
-        .max()
-        .map(|ts| ts.with_timezone(&chrono::Local))
-}
-
-/// Returns UTC timestamps for Codex activity entries (excluding SessionMeta).
-fn codex_activity_timestamps(
-    sessions: &[CodexCollectedSession],
-) -> impl Iterator<Item = chrono::DateTime<chrono::Utc>> + '_ {
-    sessions
-        .iter()
-        .flat_map(|(_, entries)| entries.iter())
-        .filter_map(|e| match e {
-            parser::codex::CodexEntry::UserMessage { timestamp, .. }
-            | parser::codex::CodexEntry::AssistantMessage { timestamp, .. }
-            | parser::codex::CodexEntry::FunctionCall { timestamp, .. } => Some(*timestamp),
-            parser::codex::CodexEntry::SessionMeta { .. }
-            | parser::codex::CodexEntry::Other { .. } => None,
-        })
-}
-
-/// Computes total token counts from Claude session summaries: (total_in, total_out).
-fn claude_total_tokens(summaries: &[parser::claude::SessionSummary]) -> (u64, u64) {
-    summaries.iter().fold((0, 0), |(acc_in, acc_out), s| {
-        let total_in =
-            s.total_input_tokens + s.total_cache_creation_tokens + s.total_cache_read_tokens;
-        (acc_in + total_in, acc_out + s.total_output_tokens)
-    })
 }
 
 /// Formats a time range as "HH:MM ~ HH:MM".
@@ -125,62 +63,87 @@ pub(super) fn print_logo_banner() {
     println!("{CYAN}  ██   ██  ███ ███  ██████{RESET}");
 }
 
-/// Prints date and session summary as a Unicode box table.
-/// Box width is dynamically sized to the longest content line.
-pub(super) fn print_info_box(
-    date: chrono::NaiveDate,
-    claude_summaries: Option<&[parser::claude::SessionSummary]>,
-    claude_entries: &[parser::claude::LogEntry],
-    codex_sessions: &[CodexCollectedSession],
-) {
-    // Build rows as (color_kind, text) pairs. "sep" means separator line.
-    let date_str = format!("{date}");
+/// One line of the info box.
+#[derive(Debug, PartialEq, Eq)]
+enum InfoRow {
+    Text(String),
+    Separator,
+    Heading { color: &'static str, text: String },
+}
 
-    let mut rows: Vec<(&str, String)> = Vec::new();
-    rows.push(("plain", date_str));
+/// Builds info box rows: the date, then one section per source.
+///
+/// Sources without any discovered log root get no section. Sources whose
+/// roots exist but have no sessions on the date show "No sessions".
+fn info_box_rows(date: chrono::NaiveDate, sources: &[CollectedSource]) -> Vec<InfoRow> {
+    let mut rows = vec![InfoRow::Text(date.to_string())];
 
-    // Claude Code section
-    if let Some(summaries) = claude_summaries {
-        rows.push(("sep", String::new()));
-        rows.push(("blue", "Claude Code".to_string()));
+    for (index, source) in sources.iter().enumerate() {
+        let collection = &source.collection;
+        if collection.roots.is_empty() {
+            continue;
+        }
+        rows.push(InfoRow::Separator);
+        rows.push(InfoRow::Heading {
+            color: SOURCE_HEADING_COLORS[index % SOURCE_HEADING_COLORS.len()],
+            text: source.display_name.to_string(),
+        });
 
-        let earliest = claude_earliest_time(claude_entries);
-        let latest = claude_latest_time(claude_entries);
-        let time_range = format_time_range(earliest, latest);
-        rows.push(("plain", time_range));
+        if collection.sessions.is_empty() {
+            rows.push(InfoRow::Text(
+                crate::messages::display::NO_SESSIONS.to_string(),
+            ));
+            continue;
+        }
 
-        let (total_in, total_out) = claude_total_tokens(summaries);
-        rows.push((
-            "plain",
-            crate::messages::display::session_count_with_tokens(
-                summaries.len(),
+        let local = |ts: chrono::DateTime<chrono::Utc>| ts.with_timezone(&chrono::Local);
+        let earliest = collection
+            .sessions
+            .iter()
+            .filter_map(|s| s.first_activity)
+            .min()
+            .map(local);
+        let latest = collection
+            .sessions
+            .iter()
+            .filter_map(|s| s.last_activity)
+            .max()
+            .map(local);
+        rows.push(InfoRow::Text(format_time_range(earliest, latest)));
+
+        let token_totals = collection
+            .sessions
+            .iter()
+            .filter_map(|s| s.token_usage)
+            .reduce(|(acc_in, acc_out), (i, o)| (acc_in + i, acc_out + o));
+        let count_line = match token_totals {
+            Some((total_in, total_out)) => crate::messages::display::session_count_with_tokens(
+                collection.sessions.len(),
                 &format_number(total_in),
                 &format_number(total_out),
             ),
-        ));
+            None => crate::messages::display::session_count(collection.sessions.len()),
+        };
+        rows.push(InfoRow::Text(count_line));
     }
 
-    // Codex section
-    rows.push(("sep", String::new()));
-    rows.push(("yellow", "Codex".to_string()));
-    if !codex_sessions.is_empty() {
-        let earliest = codex_earliest_time(codex_sessions);
-        let latest = codex_latest_time(codex_sessions);
-        let time_range = format_time_range(earliest, latest);
-        rows.push(("plain", time_range));
-        rows.push((
-            "plain",
-            crate::messages::display::session_count(codex_sessions.len()),
-        ));
-    } else {
-        rows.push(("plain", crate::messages::display::NO_SESSIONS.to_string()));
-    }
+    rows
+}
+
+/// Prints date and session summary as a Unicode box table.
+/// Box width is dynamically sized to the longest content line.
+pub(super) fn print_info_box(date: chrono::NaiveDate, sources: &[CollectedSource]) {
+    let rows = info_box_rows(date, sources);
 
     // Determine box width from the longest content line (CJK chars count as 2).
     let content_max = rows
         .iter()
-        .filter(|(kind, _)| *kind != "sep")
-        .map(|(_, text)| unicode_display_width(text))
+        .filter_map(|row| match row {
+            InfoRow::Text(text) | InfoRow::Heading { text, .. } => {
+                Some(unicode_display_width(text))
+            }
+            InfoRow::Separator => None,
+        })
         .max()
         .unwrap_or(20);
     let w = content_max + 4;
@@ -188,18 +151,14 @@ pub(super) fn print_info_box(
     let line = "─".repeat(w);
     println!("\n  ┌{line}┐");
 
-    for (kind, text) in &rows {
-        match *kind {
-            "sep" => println!("  ├{line}┤"),
-            "blue" => {
+    for row in &rows {
+        match row {
+            InfoRow::Separator => println!("  ├{line}┤"),
+            InfoRow::Heading { color, text } => {
                 let pad = w - 2 - unicode_display_width(text);
-                println!("  │  {BRIGHT_BLUE}{text}{RESET}{:pad$}│", "");
+                println!("  │  {color}{text}{RESET}{:pad$}│", "");
             }
-            "yellow" => {
-                let pad = w - 2 - unicode_display_width(text);
-                println!("  │  {YELLOW}{text}{RESET}{:pad$}│", "");
-            }
-            _ => {
+            InfoRow::Text(text) => {
                 let pad = w - 2 - unicode_display_width(text);
                 println!("  │  {text}{:pad$}│", "");
             }
@@ -298,62 +257,100 @@ pub(super) fn print_insights(source_name: &str, analysis: &analyzer::AnalysisRes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use crate::analyzer::SessionTask;
+    use crate::sources::{CollectedSession, SourceCollection};
+
+    fn source(
+        display_name: &'static str,
+        roots: Vec<std::path::PathBuf>,
+        sessions: Vec<CollectedSession>,
+    ) -> CollectedSource {
+        CollectedSource {
+            id: display_name,
+            display_name,
+            collection: SourceCollection {
+                roots,
+                sessions,
+                ..SourceCollection::default()
+            },
+        }
+    }
+
+    fn session(token_usage: Option<(u64, u64)>) -> CollectedSession {
+        CollectedSession {
+            task: SessionTask {
+                source: "codex",
+                session_id: "s1".to_string(),
+                prompt_text: String::new(),
+                messages: Vec::new(),
+                estimated_tokens: 0,
+            },
+            first_activity: None,
+            last_activity: None,
+            token_usage,
+        }
+    }
+
+    fn date() -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2099, 1, 1).expect("date")
+    }
 
     #[test]
-    fn test_codex_time_range_ignores_previous_day_session_meta() {
-        let session_meta_ts = chrono::Local
-            .with_ymd_and_hms(2099, 1, 1, 23, 28, 0)
-            .earliest()
-            .expect("session meta local time")
-            .with_timezone(&chrono::Utc);
-        let first_activity_ts = chrono::Local
-            .with_ymd_and_hms(2099, 1, 2, 0, 10, 0)
-            .earliest()
-            .expect("first activity local time")
-            .with_timezone(&chrono::Utc);
-        let last_activity_ts = chrono::Local
-            .with_ymd_and_hms(2099, 1, 2, 20, 44, 0)
-            .earliest()
-            .expect("last activity local time")
-            .with_timezone(&chrono::Utc);
+    fn test_info_box_rows_show_no_sessions_when_root_exists_without_sessions() {
+        let sources = vec![source("Claude Code", vec!["/claude".into()], Vec::new())];
 
-        let summary = parser::codex::CodexSessionSummary {
-            session_id: "s1".to_string(),
-            cwd: "/tmp".to_string(),
-            model_provider: "openai".to_string(),
-            user_count: 1,
-            assistant_count: 1,
-            function_call_count: 0,
-        };
-        let sessions = vec![(
-            summary,
+        let rows = info_box_rows(date(), &sources);
+
+        assert_eq!(
+            rows,
             vec![
-                parser::codex::CodexEntry::SessionMeta {
-                    timestamp: session_meta_ts,
-                    session_id: "s1".to_string(),
-                    cwd: "/tmp".to_string(),
-                    model_provider: "openai".to_string(),
-                    subagent_source: None,
-                    agent_role: None,
-                    agent_nickname: None,
-                    text: "s1\n/tmp\nopenai".to_string(),
+                InfoRow::Text("2099-01-01".to_string()),
+                InfoRow::Separator,
+                InfoRow::Heading {
+                    color: BRIGHT_BLUE,
+                    text: "Claude Code".to_string(),
                 },
-                parser::codex::CodexEntry::UserMessage {
-                    timestamp: first_activity_ts,
-                    text: "hello".to_string(),
-                },
-                parser::codex::CodexEntry::AssistantMessage {
-                    timestamp: last_activity_ts,
-                    text: "done".to_string(),
-                },
-            ],
+                InfoRow::Text(crate::messages::display::NO_SESSIONS.to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_info_box_rows_skip_sources_without_roots() {
+        let sources = vec![
+            source("Claude Code", Vec::new(), Vec::new()),
+            source("Codex", vec!["/codex".into()], vec![session(None)]),
+        ];
+
+        let rows = info_box_rows(date(), &sources);
+
+        let headings: Vec<&InfoRow> = rows
+            .iter()
+            .filter(|row| matches!(row, InfoRow::Heading { .. }))
+            .collect();
+        assert_eq!(
+            headings,
+            vec![&InfoRow::Heading {
+                color: YELLOW,
+                text: "Codex".to_string(),
+            }]
+        );
+        assert!(rows.contains(&InfoRow::Text(crate::messages::display::session_count(1))));
+    }
+
+    #[test]
+    fn test_info_box_rows_sum_token_usage_when_recorded() {
+        let sources = vec![source(
+            "Claude Code",
+            vec!["/claude".into()],
+            vec![session(Some((1_000, 20))), session(Some((234, 5)))],
         )];
 
-        let earliest = codex_earliest_time(&sessions).expect("earliest");
-        let latest = codex_latest_time(&sessions).expect("latest");
+        let rows = info_box_rows(date(), &sources);
 
-        assert_eq!(earliest.format("%H:%M").to_string(), "00:10");
-        assert_eq!(latest.format("%H:%M").to_string(), "20:44");
+        assert!(rows.contains(&InfoRow::Text(
+            crate::messages::display::session_count_with_tokens(2, "1,234", "25")
+        )));
+        assert!(rows.contains(&InfoRow::Text("? ~ ?".to_string())));
     }
 }

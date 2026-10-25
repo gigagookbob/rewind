@@ -194,34 +194,58 @@ fn check_config_file() -> Result<CheckResult, Box<dyn std::error::Error>> {
 
 fn check_log_roots() -> CheckResult {
     let cfg = crate::config::load_config_if_exists();
-    let claude_overrides = cfg.as_ref().and_then(|c| c.input.as_ref()).and_then(|i| {
-        i.claude
-            .as_ref()
-            .and_then(|claude| claude.roots.as_deref())
-            .or(i.claude_roots.as_deref())
-    });
-    let codex_overrides = cfg
-        .as_ref()
-        .and_then(|c| c.input.as_ref())
-        .and_then(|i| i.codex_roots.as_deref());
+    let ctx = crate::sources::CollectContext {
+        date: chrono::Local::now().date_naive(),
+        config: cfg.as_ref(),
+        include_automated: false,
+    };
+    log_roots_check(&crate::sources::registered_adapters(), &ctx)
+}
 
-    let claude_roots = crate::parser::claude::discover_claude_log_roots(claude_overrides);
-    let codex_roots = crate::parser::codex::discover_codex_session_roots(codex_overrides);
-    if claude_roots.is_empty() && codex_roots.is_empty() {
+/// Builds the "Session roots" check with one line per adapter.
+fn log_roots_check(
+    adapters: &[Box<dyn crate::sources::SourceAdapter>],
+    ctx: &crate::sources::CollectContext,
+) -> CheckResult {
+    let mut lines = Vec::new();
+    let mut total_roots = 0;
+    let mut failed = false;
+    for adapter in adapters {
+        match adapter.collect(ctx) {
+            Ok(collection) => {
+                total_roots += collection.roots.len();
+                lines.push(format!(
+                    "{} roots: {}",
+                    adapter.display_name(),
+                    collection.roots.len()
+                ));
+            }
+            Err(e) => {
+                failed = true;
+                lines.push(format!(
+                    "{} roots: check failed ({e})",
+                    adapter.display_name()
+                ));
+            }
+        }
+    }
+
+    if total_roots == 0 && !failed {
         return CheckResult {
             name: "Session roots",
             level: CheckLevel::Warn,
-            lines: vec!["No Claude/Codex log roots were discovered.".to_string()],
+            lines: vec!["No agent log roots were discovered.".to_string()],
         };
     }
 
     CheckResult {
         name: "Session roots",
-        level: CheckLevel::Ok,
-        lines: vec![
-            format!("Claude Code roots: {}", claude_roots.len()),
-            format!("Codex roots: {}", codex_roots.len()),
-        ],
+        level: if failed {
+            CheckLevel::Warn
+        } else {
+            CheckLevel::Ok
+        },
+        lines,
     }
 }
 
@@ -253,4 +277,72 @@ fn print_report(results: &[CheckResult]) {
     }
 
     println!("Summary: {ok} ok, {warn} warning, {fail} fail");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sources::claude::ClaudeAdapter;
+    use crate::sources::codex::CodexAdapter;
+    use crate::sources::{CollectContext, SourceAdapter};
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ))
+    }
+
+    fn ctx() -> CollectContext<'static> {
+        CollectContext {
+            date: chrono::NaiveDate::from_ymd_opt(2099, 1, 1).expect("date"),
+            config: None,
+            include_automated: false,
+        }
+    }
+
+    #[test]
+    fn test_log_roots_check_lists_each_adapter_with_root_count() {
+        let base = unique_temp_dir("rwd_test_doctor_roots");
+        let claude_a = base.join("claude-a");
+        let claude_b = base.join("claude-b");
+        std::fs::create_dir_all(&claude_a).expect("claude a");
+        std::fs::create_dir_all(&claude_b).expect("claude b");
+        let adapters: Vec<Box<dyn SourceAdapter>> = vec![
+            Box::new(ClaudeAdapter::with_roots(vec![claude_a, claude_b])),
+            Box::new(CodexAdapter::with_roots(vec![base.join("missing-codex")])),
+        ];
+
+        let result = log_roots_check(&adapters, &ctx());
+        std::fs::remove_dir_all(&base).ok();
+
+        assert!(matches!(result.level, CheckLevel::Ok));
+        assert_eq!(
+            result.lines,
+            vec![
+                "Claude Code roots: 2".to_string(),
+                "Codex roots: 0".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_log_roots_check_warns_when_no_roots_exist() {
+        let base = unique_temp_dir("rwd_test_doctor_no_roots");
+        let adapters: Vec<Box<dyn SourceAdapter>> = vec![
+            Box::new(ClaudeAdapter::with_roots(vec![base.join("claude")])),
+            Box::new(CodexAdapter::with_roots(vec![base.join("codex")])),
+        ];
+
+        let result = log_roots_check(&adapters, &ctx());
+
+        assert!(matches!(result.level, CheckLevel::Warn));
+        assert_eq!(
+            result.lines,
+            vec!["No agent log roots were discovered.".to_string()]
+        );
+    }
 }

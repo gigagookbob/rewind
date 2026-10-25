@@ -8,6 +8,7 @@ mod messages;
 mod output;
 mod parser;
 mod redactor;
+mod sources;
 mod update;
 
 #[cfg(target_os = "windows")]

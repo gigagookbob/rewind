@@ -317,6 +317,10 @@ pub mod status {
         format!("\u{26A0} Cache is stale. (cached: {cached_total}, current: {current_total})")
     }
 
+    pub fn source_collect_failed(source: &str, error: &str) -> String {
+        format!("\u{26A0} Skipped {source} logs: {error}")
+    }
+
     pub const CACHE_STALE_TIMEZONE: &str =
         "\u{26A0} Cache is stale. (timezone/day boundary changed)";
 
@@ -542,6 +546,10 @@ pub mod verbose {
 
     pub fn used_roots(source: &str, roots: &str) -> String {
         format!("[discover] {source} roots: {roots}")
+    }
+
+    pub fn excluded_sessions(source: &str, reason: &str, count: usize) -> String {
+        format!("[discover] {source} excluded: {count} {reason} session(s)")
     }
 
     pub fn claude_session_mix(
