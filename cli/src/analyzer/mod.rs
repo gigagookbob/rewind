@@ -143,10 +143,12 @@ fn entry_session_id(entry: &LogEntry) -> Option<&str> {
     }
 }
 
-/// Builds common session tasks from Claude entries.
+/// Builds common session tasks from Claude entries. `lines_by_session` holds
+/// extra lines (e.g. subagent results) to splice into each session by time.
 pub fn build_claude_session_tasks(
     entries: &[LogEntry],
     source: &'static str,
+    lines_by_session: &HashMap<String, Vec<prompt::TimedLine>>,
 ) -> Result<Vec<SessionTask>, AnalyzerError> {
     let session_ids = prompt::extract_session_ids(entries);
     if session_ids.is_empty() {
@@ -166,11 +168,15 @@ pub fn build_claude_session_tasks(
             .cloned()
             .collect();
 
-        let prompt_text = prompt::build_prompt(&session_entries)?;
-        let messages = prompt::extract_messages(&session_entries);
+        let lines = lines_by_session
+            .get(&session_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let prompt_text = prompt::build_prompt_with_lines(&session_entries, lines)?;
+        let messages = prompt::extract_messages_with_lines(&session_entries, lines);
         let estimated_tokens = estimated_by_session
             .get(&session_id)
-            .copied()
+            .map(|estimate| estimate + prompt::estimate_line_tokens(lines))
             .unwrap_or_else(|| prompt::estimate_prompt_tokens(&prompt_text));
 
         tasks.push(SessionTask {
@@ -185,14 +191,16 @@ pub fn build_claude_session_tasks(
     Ok(tasks)
 }
 
-/// Builds one common session task from Codex entries.
+/// Builds one common session task from Codex entries, splicing `lines`
+/// (e.g. subagent results) in by time.
 pub fn build_codex_session_task(
     entries: &[CodexEntry],
     session_id: &str,
     source: &'static str,
+    lines: &[prompt::TimedLine],
 ) -> Result<SessionTask, AnalyzerError> {
-    let prompt_text = prompt::build_codex_prompt(entries, session_id)?;
-    let messages = prompt::extract_codex_messages(entries);
+    let prompt_text = prompt::build_codex_prompt_with_lines(entries, session_id, lines)?;
+    let messages = prompt::extract_codex_messages_with_lines(entries, lines);
     let estimated_tokens = prompt::estimate_prompt_tokens(&prompt_text);
 
     Ok(SessionTask {

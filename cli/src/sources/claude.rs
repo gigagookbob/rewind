@@ -153,7 +153,7 @@ fn build_sessions(entries: &[LogEntry]) -> Result<Vec<CollectedSession>, parser:
         return Ok(Vec::new());
     }
 
-    let tasks = analyzer::build_claude_session_tasks(entries, ClaudeAdapter::ID)?;
+    let tasks = analyzer::build_claude_session_tasks(entries, ClaudeAdapter::ID, &HashMap::new())?;
 
     let mut activity: HashMap<&str, (DateTime<Utc>, DateTime<Utc>)> = HashMap::new();
     for entry in entries {
