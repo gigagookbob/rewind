@@ -159,7 +159,7 @@ pub struct RedactorConfig {
 }
 
 /// Optional input overrides for agent log discovery roots.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InputConfig {
     #[serde(default)]
     pub codex_roots: Option<Vec<String>>,
@@ -167,6 +167,8 @@ pub struct InputConfig {
     pub claude_roots: Option<Vec<String>>,
     #[serde(default)]
     pub claude: Option<ClaudeInputConfig>,
+    #[serde(default)]
+    pub antigravity: Option<AntigravityInputConfig>,
 }
 
 /// Claude-specific input options.
@@ -176,6 +178,34 @@ pub struct ClaudeInputConfig {
     pub roots: Option<Vec<String>>,
     #[serde(default)]
     pub include_automated: bool,
+}
+
+/// Antigravity-specific input options (`[input.antigravity]`).
+/// A missing section means the defaults: enabled, no extra roots, `agy -p` runs skipped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AntigravityInputConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Extra `brain` folders searched before the default ones.
+    #[serde(default)]
+    pub roots: Option<Vec<String>>,
+    /// Also analyze non-interactive `agy -p` runs.
+    #[serde(default)]
+    pub include_print_mode: bool,
+}
+
+impl Default for AntigravityInputConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            roots: None,
+            include_print_mode: false,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Returns the config file path: ~/.config/rwd/config.toml
@@ -500,6 +530,79 @@ include_automated = true
             Some(vec!["/mnt/c/Users/example/.claude/projects".to_string()])
         );
         assert!(claude.include_automated);
+    }
+
+    #[test]
+    fn test_config_input_antigravity_none_when_section_missing() {
+        let toml_str = r#"
+[llm]
+provider = "anthropic"
+anthropic_api_key = "sk-test"
+
+[output]
+path = "/tmp/vault"
+
+[input.claude]
+include_automated = true
+"#;
+        let config: Config = toml::from_str(toml_str).expect("parse");
+        let input = config.input.expect("input section");
+        assert!(input.antigravity.is_none());
+        let defaults = AntigravityInputConfig::default();
+        assert!(defaults.enabled);
+        assert!(defaults.roots.is_none());
+        assert!(!defaults.include_print_mode);
+    }
+
+    #[test]
+    fn test_config_input_antigravity_partial_section_uses_defaults() {
+        let toml_str = r#"
+[llm]
+provider = "anthropic"
+anthropic_api_key = "sk-test"
+
+[output]
+path = "/tmp/vault"
+
+[input.antigravity]
+roots = ["/mnt/c/Users/example/.gemini/antigravity/brain"]
+"#;
+        let config: Config = toml::from_str(toml_str).expect("parse");
+        let antigravity = config
+            .input
+            .and_then(|input| input.antigravity)
+            .expect("antigravity section");
+        assert!(antigravity.enabled);
+        assert!(!antigravity.include_print_mode);
+        assert_eq!(
+            antigravity.roots,
+            Some(vec![
+                "/mnt/c/Users/example/.gemini/antigravity/brain".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn test_config_input_antigravity_parses_disabled_and_print_mode() {
+        let toml_str = r#"
+[llm]
+provider = "anthropic"
+anthropic_api_key = "sk-test"
+
+[output]
+path = "/tmp/vault"
+
+[input.antigravity]
+enabled = false
+include_print_mode = true
+"#;
+        let config: Config = toml::from_str(toml_str).expect("parse");
+        let antigravity = config
+            .input
+            .and_then(|input| input.antigravity)
+            .expect("antigravity section");
+        assert!(!antigravity.enabled);
+        assert!(antigravity.include_print_mode);
     }
 
     #[test]

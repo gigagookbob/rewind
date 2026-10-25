@@ -429,7 +429,7 @@ cargo run -- today --dry-run -v
 릴리스 노트 스크립트 테스트는 저장소 맨 위 폴더에서 실행합니다.
 
 ```bash
-node --test .github/scripts/
+node --test .github/scripts/*.test.cjs
 ```
 
 `--dry-run` 없이 `rwd today`를 실행하면 실제 대화가 LLM에 전송되고 비용이 듭니다. 아래 경계를 따릅니다.
@@ -511,7 +511,7 @@ const SUBAGENT_RESULT_MAX_CHARS: usize = 8_000;
 - 깨진 줄이나 덜 써진 마지막 줄이 있어도 나머지 줄은 읽힙니다.
 - 열 수 없는 파일 하나가 있어도 다른 파일은 읽힙니다.
 - `input.antigravity.enabled = false`면 아무것도 수집하지 않습니다. 설정 파일에 `[input.antigravity]`가 없으면 켜진 것으로 봅니다.
-- 릴리스 노트 스크립트: 가짜 `github` 객체와 PR 데이터를 넘겨 `node`로 실행합니다. `## Release Highlights` 절의 줄이 `Highlights`에 들어가는지, 절이 없는 PR과 `skip-release-notes` PR은 지금과 같은지 확인합니다. 테스트 파일은 `.github/scripts/generate_release_notes.test.cjs`에 두고 `node --test .github/scripts/`로 실행합니다.
+- 릴리스 노트 스크립트: 가짜 `github` 객체와 PR 데이터를 넘겨 `node`로 실행합니다. `## Release Highlights` 절의 줄이 `Highlights`에 들어가는지, 절이 없는 PR과 `skip-release-notes` PR은 지금과 같은지 확인합니다. 테스트 파일은 `.github/scripts/generate_release_notes.test.cjs`에 두고 `node --test .github/scripts/*.test.cjs`로 실행합니다.
 
 실제 로그 확인: 3단계를 마치면 이 컴퓨터에서 `--dry-run`으로 아래 값이 나오는지 봅니다. LLM을 부르지 않으므로 경계의 먼저 물어볼 일에 들어가지 않습니다. 2026-10-24 18시 40분쯤 분석한 값이라, 그 사이 파일이 지워지거나 오늘 대화가 늘면 달라질 수 있습니다.
 

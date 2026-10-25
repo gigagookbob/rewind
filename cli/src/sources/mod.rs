@@ -4,6 +4,7 @@
 //! `SessionTask`s. Commands, the cache, and `rwd doctor` only walk the
 //! adapter list, so adding an agent means adding one adapter here.
 
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 
@@ -65,10 +66,11 @@ pub struct SourceFingerprint {
     pub entry_count: usize,
 }
 
-/// Returns every adapter in display order: Claude Code, Codex, then newer agents.
+/// Returns every adapter in display order: Claude Code, Codex, Antigravity.
 pub fn registered_adapters() -> Vec<Box<dyn SourceAdapter>> {
     vec![
         Box::new(claude::ClaudeAdapter::default()),
         Box::new(codex::CodexAdapter::default()),
+        Box::new(antigravity::AntigravityAdapter::default()),
     ]
 }

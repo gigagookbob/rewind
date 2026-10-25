@@ -222,11 +222,7 @@ pub(crate) fn run_config(key: &str, value: &str) -> Result<(), ConfigError> {
         }
         "claude-include-automated" => {
             let enabled = parse_bool_toggle(value, "claude-include-automated")?;
-            let input = config.input.get_or_insert(InputConfig {
-                codex_roots: None,
-                claude_roots: None,
-                claude: None,
-            });
+            let input = config.input.get_or_insert_with(InputConfig::default);
             let claude = input.claude.get_or_insert(ClaudeInputConfig {
                 roots: None,
                 include_automated: false,

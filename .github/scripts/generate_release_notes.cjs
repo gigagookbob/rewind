@@ -27,6 +27,33 @@ function extractPrNumbers(commits) {
   return [...numbers];
 }
 
+// Collects the top-level "- " lines under a "## Release Highlights" heading in
+// a PR body, up to the next heading. Lines inside code fences are ignored.
+function extractReleaseHighlights(body) {
+  const highlights = [];
+  let inSection = false;
+  let inFence = false;
+
+  for (const rawLine of (body ?? "").split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    if (line.trimStart().startsWith("```")) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+
+    if (/^#{1,6}\s/.test(line)) {
+      inSection = /^##\s+Release Highlights$/.test(line);
+      continue;
+    }
+    if (inSection && line.startsWith("- ") && line.slice(2).trim()) {
+      highlights.push(line);
+    }
+  }
+
+  return highlights;
+}
+
 function bucketFor(pr) {
   const labels = new Set(pr.labels.map((label) => label.name));
 
@@ -69,11 +96,13 @@ module.exports = async ({ github, context, core }) => {
     commits = data.commits;
   }
 
+  const releaseHighlights = [];
   for (const pull_number of extractPrNumbers(commits)) {
     const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
     const skip = pr.labels.some((label) => label.name === "skip-release-notes");
     if (!skip) {
       categories.get(bucketFor(pr)).push(pr);
+      releaseHighlights.push(...extractReleaseHighlights(pr.body));
     }
   }
 
@@ -104,6 +133,7 @@ module.exports = async ({ github, context, core }) => {
   }
 
   lines.push("### Highlights");
+  lines.push(...releaseHighlights);
   if (previousTag) {
     lines.push(`- Compared against \`${previousTag}\` to keep the summary scoped to this release.`);
   }
@@ -127,3 +157,5 @@ module.exports = async ({ github, context, core }) => {
   fs.writeFileSync(outputPath, lines.join("\n"));
   core.notice(`Wrote structured release intro to ${outputPath}`);
 };
+
+module.exports.extractReleaseHighlights = extractReleaseHighlights;

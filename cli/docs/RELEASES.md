@@ -66,9 +66,50 @@ This release focuses on session discovery reliability and cleaner daily summarie
 - `.github/release.yml` controls the GitHub-generated categories.
 - PRs opened from `chore/release-vX.Y.Z` branches get `skip-release-notes` automatically.
 
+## Release Highlights in PR Bodies
+
+When a PR changes setup, config, or default behavior, write the user-facing notes in the PR body so they reach `Highlights` without editing the release by hand.
+
+- Section name: a `## Release Highlights` heading (exactly this text, level 2).
+- Line format: each top-level line that starts with `- ` under that heading, up to the next heading, is copied as is. Nested bullets, other bullet styles (`*`), plain text, and lines inside code fences are ignored.
+- Placement: the lines go at the top of `Highlights`, before the fixed compare, tag, and install lines, in the order the PRs appear in the release.
+- PRs labeled `skip-release-notes` contribute no lines. PRs without the section are handled exactly as before.
+- Write the lines in English, like the rest of the release notes.
+
+Example PR body:
+
+```md
+## Summary
+- Adds the Antigravity source adapter.
+
+## Release Highlights
+- `rwd today` now reads Antigravity conversations (agy CLI, Antigravity app, Antigravity IDE) by default. Non-interactive `agy -p` runs are skipped.
+- To keep Antigravity out of your daily review, add `enabled = false` under `[input.antigravity]` in `~/.config/rwd/config.toml`.
+
+## Test plan
+- cargo test --locked
+```
+
+Resulting release notes:
+
+```md
+### Highlights
+- `rwd today` now reads Antigravity conversations (agy CLI, Antigravity app, Antigravity IDE) by default. Non-interactive `agy -p` runs are skipped.
+- To keep Antigravity out of your daily review, add `enabled = false` under `[input.antigravity]` in `~/.config/rwd/config.toml`.
+- Compared against `v0.13.17` to keep the summary scoped to this release.
+- Tagged as `v0.14.0` from commit `abc1234`.
+- Install with `cargo install --git https://github.com/gigagookbob/rewind.git` or update with `rwd update`.
+```
+
+The script's tests use a fake GitHub client and run without network access. CI does not run them, so run them from the repository root after changing the script:
+
+```bash
+node --test .github/scripts/*.test.cjs
+```
+
 ## When to Edit Manually
 
-The automated summary is the default.
+The automated summary is the default, and `## Release Highlights` in PR bodies covers most behavior and config changes.
 After publishing, it is still worth editing the release body by hand when:
 
 - a release contains behavior changes that users must react to,

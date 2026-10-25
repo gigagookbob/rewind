@@ -149,7 +149,7 @@ cargo test --locked
 ### 확인 지점 2: 2단계 끝
 
 - [x] 명세 2단계 완료 조건 1~3을 하나씩 확인
-- [ ] 사용자와 함께 결과를 보고 2단계 PR 여부 결정
+- [x] 사용자와 함께 결과를 보고 2단계 PR 여부 결정
 
 ## 3단계: Antigravity 어댑터
 
@@ -158,13 +158,13 @@ cargo test --locked
 **설명:** `parser/antigravity.rs`에 `transcript_full.jsonl` 한 줄을 받는 구조체(`step_index`, `type`, `created_at`, `content`, `thinking`, `tool_calls`)와 파일 읽기 함수를 만듭니다. 모든 필드는 `#[serde(default)]`로 받고, 깨진 줄은 경고 없이 건너뜁니다. `content`에서 `<USER_REQUEST>` 태그 안 글을 꺼내는 함수와, agy `history.jsonl`에서 `conversationId` 목록을 읽는 함수도 만듭니다.
 
 **수용 기준:**
-- [ ] `<USER_REQUEST>` 안 글만 꺼내고, 태그가 없으면 `content` 전체를 돌려줍니다. `<ADDITIONAL_METADATA>` 안 표식 문자열은 결과에 없습니다.
-- [ ] 깨진 줄과 덜 써진 마지막 줄이 있어도 나머지 줄은 읽히고, 모르는 필드와 처음 보는 `type`이 있어도 읽기가 멈추지 않습니다.
-- [ ] `history.jsonl`이 있으면 대화 ID 목록을, 없거나 읽을 수 없으면 `None`을 돌려줍니다. `display` 글은 돌려주지 않습니다.
+- [x] `<USER_REQUEST>` 안 글만 꺼내고, 태그가 없으면 `content` 전체를 돌려줍니다. `<ADDITIONAL_METADATA>` 안 표식 문자열은 결과에 없습니다.
+- [x] 깨진 줄과 덜 써진 마지막 줄이 있어도 나머지 줄은 읽히고, 모르는 필드와 처음 보는 `type`이 있어도 읽기가 멈추지 않습니다.
+- [x] `history.jsonl`이 있으면 대화 ID 목록을, 없거나 읽을 수 없으면 `None`을 돌려줍니다. `display` 글은 돌려주지 않습니다.
 
 **확인:**
-- [ ] `cargo test --locked parser::antigravity`
-- [ ] 공통 세 명령
+- [x] `cargo test --locked parser::antigravity`
+- [x] 공통 세 명령
 
 **의존:** 없음(1단계와 함께 진행할 수 있습니다)
 
@@ -179,13 +179,13 @@ cargo test --locked
 **설명:** `sources/antigravity.rs`에 명세의 Antigravity 어댑터를 만듭니다. 설정의 `roots`, `~/.gemini/antigravity-cli/brain`, `~/.gemini/antigravity/brain`, `~/.gemini/antigravity-ide/brain`, WSL의 Windows 홈 아래 같은 폴더를 찾고, 각 폴더의 `<대화 ID>/.system_generated/logs/transcript_full.jsonl`만 읽습니다. 수정 시각이 대상 날짜 시작보다 이른 파일은 열지 않고, `created_at`으로 날짜를 거르고, agy 폴더의 대화 중 `history.jsonl`에 없고 사용자 입력이 1개 이하인 대화를 `print-mode`로 뺍니다. 프롬프트는 `USER`, `ASSISTANT`(생각과 답변), `TOOL`(도구 이름) 줄로 만들고 `compact_log_like`를 거칩니다. `config.rs`에 `AntigravityInputConfig`(`enabled` 기본 `true`, `roots`, `include_print_mode` 기본 `false`)를 넣고 어댑터를 등록합니다.
 
 **수용 기준:**
-- [ ] 명세의 3단계 테스트 목록(태그 처리, 도구 인자와 다른 단계 종류 제외, `transcript.jsonl`과 `chunks/` 무시, 날짜 경계, 수정 시각, `-p` 규칙 네 가지 경우, 앱 폴더 예외, 깨진 줄, 열 수 없는 파일)이 모두 통과합니다.
-- [ ] 같은 대화 ID가 두 폴더에 있으면 `step_index` 기준으로 한 세션이 됩니다.
-- [ ] `[input.antigravity]`가 없으면 켜진 것으로, `enabled = false`면 아무것도 수집하지 않는 것으로 동작합니다.
+- [x] 명세의 3단계 테스트 목록(태그 처리, 도구 인자와 다른 단계 종류 제외, `transcript.jsonl`과 `chunks/` 무시, 날짜 경계, 수정 시각, `-p` 규칙 네 가지 경우, 앱 폴더 예외, 깨진 줄, 열 수 없는 파일)이 모두 통과합니다.
+- [x] 같은 대화 ID가 두 폴더에 있으면 `step_index` 기준으로 한 세션이 됩니다.
+- [x] `[input.antigravity]`가 없으면 켜진 것으로, `enabled = false`면 아무것도 수집하지 않는 것으로 동작합니다.
 
 **확인:**
-- [ ] `cargo test --locked sources::antigravity`, `cargo test --locked config`
-- [ ] 공통 세 명령
+- [x] `cargo test --locked sources::antigravity`, `cargo test --locked config`
+- [x] 공통 세 명령
 
 **의존:** 작업 4, 작업 6
 
@@ -202,13 +202,15 @@ cargo test --locked
 **설명:** `docs/ARCHITECTURE.md`의 입력 출처와 폴더 구조에 어댑터 구조와 Antigravity를 넣고, `README.md`의 입력 설정 절에 Antigravity 지원, `[input.antigravity]` 설정, `--dry-run` 사용법을 넣습니다. 그다음 이 컴퓨터의 실제 로그로 명세의 확인 표를 돌려 봅니다.
 
 **수용 기준:**
-- [ ] `ARCHITECTURE.md`와 `README.md`가 지금 코드 구조와 설정을 설명합니다.
-- [ ] `cargo run -- today --dry-run --date 2026-08-23`에서 Antigravity 세션 7개(앱 2개, IDE 5개)와 `-p` 실행으로 뺀 대화 20개가 나옵니다.
-- [ ] `--date 2026-10-24`에서 세션 1개(`795fdfbf`), `--date 2026-10-25`에서 `-p` 실행으로 뺀 대화 1개(`d4a3e4c1`)가 나옵니다. 그 사이 파일이 지워졌거나 대화가 늘었으면 차이를 기록합니다.
+- [x] `ARCHITECTURE.md`와 `README.md`가 지금 코드 구조와 설정을 설명합니다.
+- [x] `cargo run -- today --dry-run --date 2026-08-23`에서 Antigravity 세션 7개(앱 2개, IDE 5개)와 `-p` 실행으로 뺀 대화 20개가 나옵니다.
+- [x] `--date 2026-10-24`에서 세션 1개(`795fdfbf`), `--date 2026-10-25`에서 `-p` 실행으로 뺀 대화 1개(`d4a3e4c1`)가 나옵니다. 그 사이 파일이 지워졌거나 대화가 늘었으면 차이를 기록합니다.
 
 **확인:**
-- [ ] 위 세 명령을 직접 실행(LLM을 부르지 않음)
-- [ ] `cargo run -- doctor`에 Antigravity 폴더 줄이 나옴
+- [x] 위 세 명령을 직접 실행(LLM을 부르지 않음)
+- [x] `cargo run -- doctor`에 Antigravity 폴더 줄이 나옴
+
+**확인 결과(2026-10-25):** 세 날짜 모두 기대값과 같았습니다. 2026-08-23은 세션 7개(앱 `43e33e6a`, `3540b582`, IDE 5개)와 `-p` 실행으로 뺀 agy 대화 20개, 2026-10-24는 앱 대화 `795fdfbf` 1개, 2026-10-25는 세션 0개와 뺀 대화 `d4a3e4c1` 1개입니다. `rwd doctor`는 `Antigravity roots: 3`을 보여 줍니다. 대화 폴더 59개(agy 26개, 앱 14개, IDE 19개) 중 `transcript_full.jsonl`이 있는 38개만 읽히고, 나머지 21개는 명세대로 읽지 않습니다.
 
 **의존:** 작업 5, 작업 7
 
@@ -223,12 +225,14 @@ cargo test --locked
 **설명:** `.github/scripts/generate_release_notes.cjs`가 릴리스에 들어가는 PR 본문의 `## Release Highlights` 절에서 `- `로 시작하는 줄을 다음 제목까지 모아, `Highlights`의 정해진 세 줄 앞에 PR 순서대로 넣게 합니다. `skip-release-notes` PR의 줄은 넣지 않습니다. `docs/RELEASES.md`에 이 절을 쓰는 방법을 적습니다.
 
 **수용 기준:**
-- [ ] `node --test`로 도는 테스트에서, 절이 있는 PR의 줄이 `Highlights`에 들어가고, 절이 없는 PR만 있으면 출력이 지금과 같고, `skip-release-notes` PR의 줄은 들어가지 않습니다.
-- [ ] 스크립트 테스트는 가짜 `github` 객체와 PR 데이터만 쓰고 네트워크를 쓰지 않습니다.
-- [ ] `RELEASES.md`에 절 이름, 줄 형식, 예시가 있습니다.
+- [x] `node --test`로 도는 테스트에서, 절이 있는 PR의 줄이 `Highlights`에 들어가고, 절이 없는 PR만 있으면 출력이 지금과 같고, `skip-release-notes` PR의 줄은 들어가지 않습니다.
+- [x] 스크립트 테스트는 가짜 `github` 객체와 PR 데이터만 쓰고 네트워크를 쓰지 않습니다.
+- [x] `RELEASES.md`에 절 이름, 줄 형식, 예시가 있습니다.
 
 **확인:**
-- [ ] 저장소 맨 위 폴더에서 `node --test .github/scripts/`
+- [x] 저장소 맨 위 폴더에서 `node --test .github/scripts/*.test.cjs`
+
+**명령 변경(2026-10-25):** 처음 적은 `node --test .github/scripts/`는 Node 22 이상에서 폴더 안을 찾지 않고 폴더 자체를 파일로 열려다 실패합니다(이 컴퓨터의 Node v24.16.0에서 `Cannot find module`). 그래서 셸이 테스트 파일 이름을 펼쳐 넘기는 `node --test .github/scripts/*.test.cjs`로 바꾸고, 명세와 계획의 같은 명령도 함께 고쳤습니다.
 
 **의존:** 없음(3단계 PR보다 먼저 `main`에 들어가야 합니다)
 

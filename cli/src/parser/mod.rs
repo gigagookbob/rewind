@@ -2,6 +2,8 @@
 
 use chrono::{DateTime, Datelike, Local, NaiveDate, TimeZone, Utc};
 
+// Antigravity submodule: transcript_full.jsonl and agy history.jsonl reading.
+pub mod antigravity;
 pub mod claude;
 pub mod roots;
 
