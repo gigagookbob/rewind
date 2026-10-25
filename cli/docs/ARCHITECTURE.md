@@ -53,8 +53,15 @@ rwd/
 │   ├── MILESTONES.md
 │   └── CONVENTIONS.md
 ├── src/
-│   ├── main.rs          # CLI entry point
+│   ├── main.rs          # CLI 진입점과 명령 분기
 │   ├── cli.rs           # clap-based CLI definitions
+│   ├── commands/        # 명령 실행 흐름
+│   │   ├── mod.rs       # 날짜와 언어 선택, 명령 진입점
+│   │   ├── today.rs     # 일일 로그 수집, 분석, 캐시와 저장
+│   │   ├── summary.rs   # 요약과 Slack용 글 생성, 클립보드 복사
+│   │   ├── collection.rs# 출처별 로그 탐색, 필터와 세션 머지
+│   │   ├── display.rs   # 터미널 표시와 활동 시간 집계
+│   │   └── background.rs# 백그라운드 프로세스, 잠금과 알림
 │   ├── messages.rs      # Centralized user-facing strings
 │   ├── config.rs        # Config file management
 │   ├── parser/          # Log parsing modules
