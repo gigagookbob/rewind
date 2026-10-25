@@ -42,6 +42,12 @@ pub enum CodexEntry {
         subagent_source: Option<String>,
         agent_role: Option<String>,
         agent_nickname: Option<String>,
+        /// `source.subagent.thread_spawn.parent_thread_id`: the session that
+        /// spawned this one.
+        parent_thread_id: Option<String>,
+        /// `source.subagent.thread_spawn.agent_path`: this agent's address in
+        /// inter-agent messages, e.g. "/root/ada".
+        agent_path: Option<String>,
         text: String,
     },
     /// User input message
@@ -52,6 +58,18 @@ pub enum CodexEntry {
     /// Assistant (AI) text response
     AssistantMessage {
         timestamp: DateTime<Utc>,
+        /// Prompt text: the answer plus every other payload string.
+        text: String,
+        /// Only the `output_text` blocks, used as a subagent's final result.
+        output_text: String,
+    },
+    /// Message between agents of one multi-agent run (`response_item` of type
+    /// `agent_message`). A subagent receives its task this way.
+    AgentMessage {
+        timestamp: DateTime<Utc>,
+        /// Receiving agent's path, e.g. "/root/ada".
+        recipient: String,
+        /// `input_text` blocks only; encrypted blocks are skipped.
         text: String,
     },
     /// Function (tool) call by the AI
@@ -125,6 +143,34 @@ fn optional_non_empty_string(value: &serde_json::Value) -> Option<String> {
     Some(text.to_string())
 }
 
+/// `response_item` payload type for inter-agent messages. Verified: all 50
+/// forked subagent rollouts receive their task as the first `agent_message`
+/// whose `recipient` is their own `agent_path` (SPEC.md, stage 4).
+const PAYLOAD_AGENT_MESSAGE: &str = "agent_message";
+
+/// Reads one string field of `source.subagent.thread_spawn`.
+fn thread_spawn_field(payload: &serde_json::Value, field: &str) -> Option<String> {
+    payload
+        .get("source")?
+        .get("subagent")?
+        .get("thread_spawn")?
+        .get(field)
+        .and_then(optional_non_empty_string)
+}
+
+/// Joins the text of `input_text` blocks in a payload's `content` array.
+fn extract_input_text_blocks(payload: &serde_json::Value) -> String {
+    let Some(content) = payload["content"].as_array() else {
+        return String::new();
+    };
+    content
+        .iter()
+        .filter(|block| block["type"].as_str() == Some("input_text"))
+        .filter_map(|block| block["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn extract_subagent_source(payload: &serde_json::Value) -> Option<String> {
     let source = payload.get("source")?.as_object()?;
     let subagent = source.get("subagent")?;
@@ -190,6 +236,8 @@ impl CodexEntry {
                     subagent_source,
                     agent_role,
                     agent_nickname,
+                    parent_thread_id: thread_spawn_field(payload, "parent_thread_id"),
+                    agent_path: thread_spawn_field(payload, "agent_path"),
                     text: payload_text.clone(),
                 }
             }
@@ -223,11 +271,22 @@ impl CodexEntry {
                 if payload["type"].as_str() == Some("message")
                     && payload["role"].as_str() == Some("assistant") =>
             {
-                let text = extract_codex_output_text(payload);
-                let text = join_unique_lines(&[text, payload_text.clone()]);
+                let output_text = extract_codex_output_text(payload);
+                let text = join_unique_lines(&[output_text.clone(), payload_text.clone()]);
                 CodexEntry::AssistantMessage {
                     timestamp: ts,
                     text,
+                    output_text,
+                }
+            }
+            "response_item" if payload["type"].as_str() == Some(PAYLOAD_AGENT_MESSAGE) => {
+                CodexEntry::AgentMessage {
+                    timestamp: ts,
+                    recipient: payload["recipient"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
+                    text: extract_input_text_blocks(payload),
                 }
             }
             "response_item" if payload["type"].as_str() == Some("function_call") => {
@@ -377,6 +436,7 @@ pub fn entry_timestamp(entry: &CodexEntry) -> Option<DateTime<Utc>> {
         CodexEntry::SessionMeta { timestamp, .. }
         | CodexEntry::UserMessage { timestamp, .. }
         | CodexEntry::AssistantMessage { timestamp, .. }
+        | CodexEntry::AgentMessage { timestamp, .. }
         | CodexEntry::FunctionCall { timestamp, .. }
         | CodexEntry::Other { timestamp, .. } => Some(*timestamp),
     }
@@ -488,6 +548,8 @@ enum CodexEntryFingerprint {
         subagent_source: Option<String>,
         agent_role: Option<String>,
         agent_nickname: Option<String>,
+        parent_thread_id: Option<String>,
+        agent_path: Option<String>,
         text: String,
     },
     UserMessage {
@@ -496,6 +558,11 @@ enum CodexEntryFingerprint {
     },
     AssistantMessage {
         timestamp_millis: i64,
+        text: String,
+    },
+    AgentMessage {
+        timestamp_millis: i64,
+        recipient: String,
         text: String,
     },
     FunctionCall {
@@ -520,6 +587,8 @@ fn entry_fingerprint(entry: &CodexEntry) -> CodexEntryFingerprint {
             subagent_source,
             agent_role,
             agent_nickname,
+            parent_thread_id,
+            agent_path,
             text,
         } => CodexEntryFingerprint::SessionMeta {
             timestamp_millis: timestamp.timestamp_millis(),
@@ -529,18 +598,30 @@ fn entry_fingerprint(entry: &CodexEntry) -> CodexEntryFingerprint {
             subagent_source: subagent_source.clone(),
             agent_role: agent_role.clone(),
             agent_nickname: agent_nickname.clone(),
+            parent_thread_id: parent_thread_id.clone(),
+            agent_path: agent_path.clone(),
             text: text.clone(),
         },
         CodexEntry::UserMessage { timestamp, text } => CodexEntryFingerprint::UserMessage {
             timestamp_millis: timestamp.timestamp_millis(),
             text: text.clone(),
         },
-        CodexEntry::AssistantMessage { timestamp, text } => {
-            CodexEntryFingerprint::AssistantMessage {
-                timestamp_millis: timestamp.timestamp_millis(),
-                text: text.clone(),
-            }
-        }
+        // `output_text` is part of `text`, so `text` alone identifies the entry.
+        CodexEntry::AssistantMessage {
+            timestamp, text, ..
+        } => CodexEntryFingerprint::AssistantMessage {
+            timestamp_millis: timestamp.timestamp_millis(),
+            text: text.clone(),
+        },
+        CodexEntry::AgentMessage {
+            timestamp,
+            recipient,
+            text,
+        } => CodexEntryFingerprint::AgentMessage {
+            timestamp_millis: timestamp.timestamp_millis(),
+            recipient: recipient.clone(),
+            text: text.clone(),
+        },
         CodexEntry::FunctionCall {
             timestamp,
             name,
@@ -629,7 +710,7 @@ pub fn summarize_codex_entries(entries: &[CodexEntry]) -> CodexSessionSummary {
             CodexEntry::UserMessage { .. } => summary.user_count += 1,
             CodexEntry::AssistantMessage { .. } => summary.assistant_count += 1,
             CodexEntry::FunctionCall { .. } => summary.function_call_count += 1,
-            CodexEntry::Other { .. } => {}
+            CodexEntry::AgentMessage { .. } | CodexEntry::Other { .. } => {}
         }
     }
 
@@ -710,6 +791,74 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_parse_session_meta_entry_reads_thread_spawn_link() {
+        let json = r#"{"timestamp":"2026-10-21T13:34:55Z","type":"session_meta","payload":{"id":"child","forked_from_id":"parent","cwd":"/p","model_provider":"openai","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent","depth":1,"agent_path":"/root/ada","agent_nickname":"Ada","agent_role":null}}},"agent_nickname":"Ada","agent_path":"/root/ada"}}"#;
+        let entry = CodexEntry::from_raw(serde_json::from_str(json).unwrap());
+
+        if let CodexEntry::SessionMeta {
+            session_id,
+            subagent_source,
+            agent_nickname,
+            parent_thread_id,
+            agent_path,
+            ..
+        } = entry
+        {
+            assert_eq!(session_id, "child");
+            assert!(subagent_source.is_some());
+            assert_eq!(agent_nickname.as_deref(), Some("Ada"));
+            assert_eq!(parent_thread_id.as_deref(), Some("parent"));
+            assert_eq!(agent_path.as_deref(), Some("/root/ada"));
+        } else {
+            panic!("Expected SessionMeta variant");
+        }
+    }
+
+    #[test]
+    fn test_parse_session_meta_entry_without_thread_spawn_has_no_link() {
+        let json = r#"{"timestamp":"2026-04-22T09:00:00Z","type":"session_meta","payload":{"id":"sess-sub","cwd":"/p","model_provider":"openai","source":{"subagent":"memory_consolidation"}}}"#;
+        let entry = CodexEntry::from_raw(serde_json::from_str(json).unwrap());
+        assert!(matches!(
+            entry,
+            CodexEntry::SessionMeta {
+                parent_thread_id: None,
+                agent_path: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_agent_message_reads_recipient_and_input_text() {
+        let json = r#"{"timestamp":"2026-10-21T13:35:00Z","type":"response_item","payload":{"type":"agent_message","id":"m1","author":"/root","recipient":"/root/ada","content":[{"type":"encrypted_content","encrypted_content":"OPAQUE"},{"type":"input_text","text":"Check the parser"}],"internal_chat_message_metadata_passthrough":{}}}"#;
+        let entry = CodexEntry::from_raw(serde_json::from_str(json).unwrap());
+        if let CodexEntry::AgentMessage {
+            recipient, text, ..
+        } = entry
+        {
+            assert_eq!(recipient, "/root/ada");
+            assert_eq!(text, "Check the parser");
+        } else {
+            panic!("Expected AgentMessage variant");
+        }
+    }
+
+    #[test]
+    fn test_parse_assistant_message_keeps_clean_output_text() {
+        let json = r#"{"timestamp":"2026-03-16T09:02:00Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"msg_1","content":[{"type":"output_text","text":"Found two"},{"type":"output_text","text":" edge cases"}]}}"#;
+        let entry = CodexEntry::from_raw(serde_json::from_str(json).unwrap());
+        if let CodexEntry::AssistantMessage {
+            text, output_text, ..
+        } = entry
+        {
+            assert_eq!(output_text, "Found two edge cases");
+            assert!(text.contains("msg_1"), "prompt text keeps payload strings");
+        } else {
+            panic!("Expected AssistantMessage variant");
+        }
+    }
+
     fn make_session_meta_entry(
         session_id: &str,
         cwd: &str,
@@ -727,6 +876,8 @@ mod tests {
             subagent_source: subagent_source.map(str::to_string),
             agent_role: agent_role.map(str::to_string),
             agent_nickname: agent_nickname.map(str::to_string),
+            parent_thread_id: None,
+            agent_path: None,
             text: "subagent".to_string(),
         }
     }
@@ -942,6 +1093,8 @@ mod tests {
                 subagent_source: None,
                 agent_role: None,
                 agent_nickname: None,
+                parent_thread_id: None,
+                agent_path: None,
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
@@ -1008,6 +1161,8 @@ mod tests {
                 subagent_source: None,
                 agent_role: None,
                 agent_nickname: None,
+                parent_thread_id: None,
+                agent_path: None,
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
@@ -1017,6 +1172,7 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: yesterday_ts,
                 text: "old reply".to_string(),
+                output_text: String::new(),
             },
             CodexEntry::UserMessage {
                 timestamp: today_ts,
@@ -1025,6 +1181,7 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: today_ts,
                 text: "new reply".to_string(),
+                output_text: String::new(),
             },
         ];
 
@@ -1055,6 +1212,8 @@ mod tests {
                 subagent_source: None,
                 agent_role: None,
                 agent_nickname: None,
+                parent_thread_id: None,
+                agent_path: None,
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
@@ -1084,6 +1243,8 @@ mod tests {
                 subagent_source: None,
                 agent_role: None,
                 agent_nickname: None,
+                parent_thread_id: None,
+                agent_path: None,
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
@@ -1093,6 +1254,7 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: today_ts,
                 text: "reply".to_string(),
+                output_text: String::new(),
             },
             CodexEntry::FunctionCall {
                 timestamp: today_ts,
@@ -1119,6 +1281,8 @@ mod tests {
                 subagent_source: None,
                 agent_role: None,
                 agent_nickname: None,
+                parent_thread_id: None,
+                agent_path: None,
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
@@ -1132,10 +1296,12 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: window.end_utc - chrono::Duration::nanoseconds(1),
                 text: "before_end".to_string(),
+                output_text: String::new(),
             },
             CodexEntry::AssistantMessage {
                 timestamp: window.end_utc,
                 text: "at_end".to_string(),
+                output_text: String::new(),
             },
         ];
 

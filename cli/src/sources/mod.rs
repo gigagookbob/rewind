@@ -7,6 +7,7 @@
 pub mod antigravity;
 pub mod claude;
 pub mod codex;
+pub mod subagent;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};

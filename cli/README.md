@@ -152,7 +152,7 @@ Update notice env toggles:
 
 Claude session filtering:
 - Default behavior excludes automated Claude sessions from `rwd today`.
-- Task-tool subagent (sidechain) entries are always excluded from counts and analysis.
+- Subagents never count as sessions. What each subagent was asked and its final answer are added to the parent session's prompt, read from `<session>/subagents/agent-*.jsonl` (or from the parent's tool result when that file is missing). Its tool calls and intermediate turns are not sent.
 - Enable globally with:
 ```toml
 [input.claude]
@@ -161,8 +161,10 @@ include_automated = true
 - Keep custom Claude roots in either legacy `[input] claude_roots = [...]` or new `[input.claude] roots = [...]`.
 
 Codex session filtering:
-- Default behavior excludes sessions with explicit subagent metadata in `session_meta`.
+- Sessions with explicit subagent metadata in `session_meta` never count as sessions.
 - Hard signals are `source.subagent`, `agent_role`, and `agent_nickname`.
+- A spawned subagent's task (the first message sent to it) and final answer are added to its interactive parent's prompt, found through `parent_thread_id`. Subagents with no parent session that day are only counted in `-v`.
+- Subagent text is capped for both sources: tasks at 2,000 characters each and 6,000 per session, final answers at 8,000 each and 24,000 per session. Longer text keeps its first two thirds and last third.
 - Worktree interactive sessions are still included by default.
 - `cwd` patterns and prompt heuristics are not used.
 

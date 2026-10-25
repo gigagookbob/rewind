@@ -6,24 +6,69 @@
 use super::planner::SessionEstimate;
 use crate::parser::claude::{ContentBlock, LogEntry};
 use crate::parser::codex::CodexEntry;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-/// Builds prompt text from a LogEntry slice for the Claude API.
-/// Groups by session with [Session: id] headers and [USER]/[ASSISTANT] tags.
+/// A line spliced into one session's prompt at a point in time, such as a
+/// subagent's task or result. Source adapters build these; the analyzer only
+/// orders them and does not know where they came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimedLine {
+    pub at: DateTime<Utc>,
+    pub role: &'static str,
+    pub text: String,
+}
+
+/// Puts each line (sorted by `at`) before the first message stamped later
+/// than the line. Lines with no later message go last. Messages without a
+/// timestamp never pull lines ahead of them.
+fn splice_timed_lines(
+    messages: impl IntoIterator<Item = (Option<DateTime<Utc>>, String, String)>,
+    lines: &[TimedLine],
+) -> Vec<(String, String)> {
+    let mut pending = lines.iter().peekable();
+    let mut out = Vec::new();
+    for (ts, role, text) in messages {
+        if let Some(ts) = ts {
+            while let Some(line) = pending.next_if(|line| line.at < ts) {
+                out.push((line.role.to_string(), line.text.clone()));
+            }
+        }
+        out.push((role, text));
+    }
+    out.extend(pending.map(|line| (line.role.to_string(), line.text.clone())));
+    out
+}
+
+/// `build_prompt_with_lines` without extra lines; the baseline in tests.
+#[cfg(test)]
 pub fn build_prompt(entries: &[LogEntry]) -> Result<String, super::AnalyzerError> {
-    let conversation_text = extract_conversation_text(entries);
+    build_prompt_with_lines(entries, &[])
+}
+
+/// Builds prompt text from a LogEntry slice for the Claude API.
+/// Groups by session with [Session: id] headers and [USER]/[ASSISTANT] tags,
+/// and splices `lines` in by time. `entries` must hold a single session when
+/// `lines` is not empty, as `build_claude_session_tasks` passes them.
+pub fn build_prompt_with_lines(
+    entries: &[LogEntry],
+    lines: &[TimedLine],
+) -> Result<String, super::AnalyzerError> {
+    let conversation_text = extract_conversation_text(entries, lines);
     if conversation_text.is_empty() {
         return Err(crate::messages::error::NO_CONVERSATION_CLAUDE.into());
     }
     Ok(conversation_text)
 }
 
+type TimedMessage = (Option<DateTime<Utc>>, String, String);
+
 /// Extracts human-readable conversation text from LogEntries.
 ///
 /// Groups messages by session using a HashMap, then converts each session to text.
-/// Uses Vec<(role, text)> to maintain chronological order.
-fn extract_conversation_text(entries: &[LogEntry]) -> String {
-    let mut sessions: HashMap<&str, Vec<(&str, String)>> = HashMap::new();
+/// Uses Vec<(timestamp, role, text)> to maintain chronological order.
+fn extract_conversation_text(entries: &[LogEntry], lines: &[TimedLine]) -> String {
+    let mut sessions: HashMap<&str, Vec<TimedMessage>> = HashMap::new();
     // Preserves session insertion order (HashMap does not guarantee order).
     let mut session_order: Vec<&str> = Vec::new();
 
@@ -37,14 +82,18 @@ fn extract_conversation_text(entries: &[LogEntry]) -> String {
         if !sessions.contains_key(session_id) {
             session_order.push(session_id);
         }
-        sessions.entry(session_id).or_default().push((role, text));
+        sessions.entry(session_id).or_default().push((
+            crate::parser::claude::entry_timestamp(entry),
+            role.to_string(),
+            text,
+        ));
     }
 
     let mut output = String::new();
     for session_id in &session_order {
-        if let Some(messages) = sessions.get(session_id) {
+        if let Some(messages) = sessions.remove(session_id) {
             output.push_str(&format!("[Session: {session_id}]\n"));
-            for (role, text) in messages {
+            for (role, text) in splice_timed_lines(messages, lines) {
                 output.push_str(&format!("[{role}] {text}\n"));
             }
             output.push('\n');
@@ -223,29 +272,52 @@ fn extract_entry_text(entry: &LogEntry) -> Option<(&'static str, String)> {
     Some((role, super::compaction::compact_log_like(&text)))
 }
 
-/// Extracts (role, text) tuples from LogEntries.
-/// Used by summarizer's split_into_chunks.
+/// `extract_messages_with_lines` without extra lines; the baseline in tests.
+#[cfg(test)]
 pub fn extract_messages(entries: &[LogEntry]) -> Vec<(String, String)> {
-    let mut messages = Vec::new();
-    for entry in entries {
-        if let Some((role, text)) = extract_entry_text(entry) {
-            messages.push((role.to_string(), text));
-        }
-    }
-    messages
+    extract_messages_with_lines(entries, &[])
 }
 
-/// Converts Codex entries into prompt text for LLM analysis.
-/// Each Codex file is a single session, so session_id is passed externally.
-/// Long log-like pastes are compacted to keep the prompt under LLM limits.
+/// Extracts (role, text) tuples from LogEntries, with `lines` spliced in by
+/// time. Used by summarizer's split_into_chunks via `SessionTask::messages`.
+pub fn extract_messages_with_lines(
+    entries: &[LogEntry],
+    lines: &[TimedLine],
+) -> Vec<(String, String)> {
+    let messages = entries.iter().filter_map(|entry| {
+        extract_entry_text(entry).map(|(role, text)| {
+            (
+                crate::parser::claude::entry_timestamp(entry),
+                role.to_string(),
+                text,
+            )
+        })
+    });
+    splice_timed_lines(messages, lines)
+}
+
+/// `build_codex_prompt_with_lines` without extra lines; the baseline in tests.
+#[cfg(test)]
 pub fn build_codex_prompt(
     entries: &[CodexEntry],
     session_id: &str,
 ) -> Result<String, super::AnalyzerError> {
+    build_codex_prompt_with_lines(entries, session_id, &[])
+}
+
+/// Converts Codex entries into prompt text for LLM analysis, with `lines`
+/// spliced in by time.
+/// Each Codex file is a single session, so session_id is passed externally.
+/// Long log-like pastes are compacted to keep the prompt under LLM limits.
+pub fn build_codex_prompt_with_lines(
+    entries: &[CodexEntry],
+    session_id: &str,
+    lines: &[TimedLine],
+) -> Result<String, super::AnalyzerError> {
     let mut output = format!("[Session: {session_id}]\n");
     let mut has_text = false;
 
-    for (role, text) in codex_role_text_pairs(entries) {
+    for (role, text) in splice_timed_lines(codex_timed_role_text(entries), lines) {
         has_text = true;
         output.push('[');
         output.push_str(&role);
@@ -264,12 +336,29 @@ pub fn build_codex_prompt(
     Ok(output)
 }
 
-/// Extracts (role, text) tuples from Codex entries with log-like pastes compacted.
+/// `extract_codex_messages_with_lines` without extra lines; the baseline in tests.
+#[cfg(test)]
 pub fn extract_codex_messages(entries: &[CodexEntry]) -> Vec<(String, String)> {
-    codex_role_text_pairs(entries).collect()
+    extract_codex_messages_with_lines(entries, &[])
 }
 
-fn codex_role_text_pairs(entries: &[CodexEntry]) -> impl Iterator<Item = (String, String)> + '_ {
+/// Extracts (role, text) tuples from Codex entries with log-like pastes
+/// compacted, and `lines` spliced in by time.
+pub fn extract_codex_messages_with_lines(
+    entries: &[CodexEntry],
+    lines: &[TimedLine],
+) -> Vec<(String, String)> {
+    splice_timed_lines(codex_timed_role_text(entries), lines)
+}
+
+fn codex_timed_role_text(entries: &[CodexEntry]) -> impl Iterator<Item = TimedMessage> + '_ {
+    entries.iter().filter_map(|entry| {
+        codex_role_text(entry)
+            .map(|(role, text)| (crate::parser::codex::entry_timestamp(entry), role, text))
+    })
+}
+
+fn codex_role_text(entry: &CodexEntry) -> Option<(String, String)> {
     // Prompt policy:
     //   - USER / ASSISTANT messages keep full (compacted) text: they are the
     //     core material for insight extraction.
@@ -280,7 +369,7 @@ fn codex_role_text_pairs(entries: &[CodexEntry]) -> impl Iterator<Item = (String
     //     the model can still see that the session used tools, without
     //     shipping megabytes of tool-output text through the LLM call.
     //   - SessionMeta is preserved as-is (short by construction).
-    entries.iter().filter_map(|entry| match entry {
+    match entry {
         CodexEntry::SessionMeta { text, .. } if !text.is_empty() => Some((
             "META".to_string(),
             super::compaction::compact_log_like(text),
@@ -299,8 +388,12 @@ fn codex_role_text_pairs(entries: &[CodexEntry]) -> impl Iterator<Item = (String
         CodexEntry::Other { entry_type, .. } if !entry_type.is_empty() => {
             Some((format!("EVENT:{entry_type}"), String::new()))
         }
+        // Inter-agent messages used to parse as `Other` of type
+        // `response_item`; keep that marker so parent prompts stay the same.
+        // A subagent's task and result come from its own rollout instead.
+        CodexEntry::AgentMessage { .. } => Some(("EVENT:response_item".to_string(), String::new())),
         _ => None,
-    })
+    }
 }
 
 /// Extracts unique session IDs from LogEntries, preserving insertion order.
@@ -339,6 +432,15 @@ pub fn estimate_tokens(text: &str) -> u64 {
 /// Estimates session tokens from a pre-built prompt text.
 pub fn estimate_prompt_tokens(prompt_text: &str) -> u64 {
     estimate_tokens(prompt_text) + SYSTEM_PROMPT_ESTIMATED_TOKENS
+}
+
+/// Extra tokens spliced lines add, counted like `estimate_sessions` counts text.
+pub fn estimate_line_tokens(lines: &[TimedLine]) -> u64 {
+    lines
+        .iter()
+        .map(|line| line.text.chars().count() as u64)
+        .sum::<u64>()
+        / 2
 }
 
 /// Returns per-session token estimates.
@@ -497,6 +599,7 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: "2026-03-11T10:00:30Z".parse().unwrap(),
                 text: "src/ 디렉토리를 확인했습니다".to_string(),
+                output_text: String::new(),
             },
         ];
         let prompt = build_codex_prompt(&entries, "test-session").unwrap();
@@ -517,6 +620,8 @@ mod tests {
                 subagent_source: None,
                 agent_role: None,
                 agent_nickname: None,
+                parent_thread_id: None,
+                agent_path: None,
                 text: "s1\n/tmp\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
@@ -526,6 +631,7 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: "2026-03-11T10:00:10Z".parse().unwrap(),
                 text: "답변".to_string(),
+                output_text: String::new(),
             },
             CodexEntry::FunctionCall {
                 timestamp: "2026-03-11T10:00:20Z".parse().unwrap(),
@@ -575,6 +681,7 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: "2026-03-11T10:00:10Z".parse().unwrap(),
                 text: "완료".to_string(),
+                output_text: String::new(),
             },
         ];
         let prompt = build_codex_prompt(&entries, "s1").unwrap();
@@ -617,6 +724,169 @@ mod tests {
         let entries: Vec<CodexEntry> = vec![];
         let result = build_codex_prompt(&entries, "s1");
         assert!(result.is_err());
+    }
+
+    fn timed_line(at: &str, role: &'static str, text: &str) -> TimedLine {
+        TimedLine {
+            at: at.parse().unwrap(),
+            role,
+            text: text.to_string(),
+        }
+    }
+
+    fn claude_sample_entries() -> Vec<LogEntry> {
+        [
+            r#"{"type":"user","sessionId":"s1","timestamp":"2026-03-11T10:00:00Z","uuid":"u1","message":{"role":"user","content":"first"}}"#,
+            r#"{"type":"assistant","sessionId":"s1","timestamp":"2026-03-11T10:05:00Z","uuid":"a1","message":{"role":"assistant","content":[{"type":"text","text":"answer"}]}}"#,
+            r#"{"type":"user","sessionId":"s1","timestamp":"2026-03-11T10:10:00Z","uuid":"u2","message":{"role":"user","content":"second"}}"#,
+        ]
+        .iter()
+        .map(|line| serde_json::from_str::<LogEntry>(line).unwrap())
+        .collect()
+    }
+
+    #[test]
+    fn test_build_prompt_with_lines_places_lines_before_first_later_message() {
+        let lines = vec![
+            timed_line("2026-03-11T10:05:00Z", "SUBAGENT", "Explore: find x"),
+            timed_line("2026-03-11T10:05:00Z", "SUBAGENT_RESULT", "found x"),
+        ];
+        let prompt = build_prompt_with_lines(&claude_sample_entries(), &lines).unwrap();
+        // A line stamped at the same time as a message goes after it.
+        assert_eq!(
+            prompt,
+            "[Session: s1]\n\
+             [USER] first\n\
+             [ASSISTANT] answer\n\
+             [SUBAGENT] Explore: find x\n\
+             [SUBAGENT_RESULT] found x\n\
+             [USER] second\n\n"
+        );
+    }
+
+    #[test]
+    fn test_build_prompt_with_lines_appends_lines_without_later_message() {
+        let lines = vec![timed_line("2026-03-11T11:00:00Z", "SUBAGENT", "late")];
+        let prompt = build_prompt_with_lines(&claude_sample_entries(), &lines).unwrap();
+        assert!(
+            prompt.ends_with("[USER] second\n[SUBAGENT] late\n\n"),
+            "{prompt}"
+        );
+    }
+
+    #[test]
+    fn test_build_prompt_with_no_lines_matches_build_prompt() {
+        let entries = claude_sample_entries();
+        assert_eq!(
+            build_prompt_with_lines(&entries, &[]).unwrap(),
+            build_prompt(&entries).unwrap()
+        );
+        assert_eq!(
+            extract_messages_with_lines(&entries, &[]),
+            extract_messages(&entries)
+        );
+    }
+
+    #[test]
+    fn test_extract_messages_with_lines_splices_in_time_order() {
+        let lines = vec![timed_line("2026-03-11T10:01:00Z", "SUBAGENT", "plan: x")];
+        let roles: Vec<String> = extract_messages_with_lines(&claude_sample_entries(), &lines)
+            .into_iter()
+            .map(|(role, _)| role)
+            .collect();
+        assert_eq!(roles, vec!["USER", "SUBAGENT", "ASSISTANT", "USER"]);
+    }
+
+    fn codex_sample_entries() -> Vec<CodexEntry> {
+        vec![
+            CodexEntry::SessionMeta {
+                timestamp: "2026-03-10T23:00:00Z".parse().unwrap(),
+                session_id: "s1".to_string(),
+                cwd: "/tmp".to_string(),
+                model_provider: "openai".to_string(),
+                subagent_source: None,
+                agent_role: None,
+                agent_nickname: None,
+                parent_thread_id: None,
+                agent_path: None,
+                text: "s1".to_string(),
+            },
+            CodexEntry::UserMessage {
+                timestamp: "2026-03-11T10:00:00Z".parse().unwrap(),
+                text: "q".to_string(),
+            },
+            CodexEntry::AssistantMessage {
+                timestamp: "2026-03-11T10:10:00Z".parse().unwrap(),
+                text: "a".to_string(),
+                output_text: String::new(),
+            },
+        ]
+    }
+
+    #[test]
+    fn test_build_codex_prompt_with_lines_places_lines_by_time() {
+        let lines = vec![
+            timed_line("2026-03-11T10:05:00Z", "SUBAGENT", "Ada: review"),
+            timed_line("2026-03-11T10:05:00Z", "SUBAGENT_RESULT", "ok"),
+        ];
+        let prompt = build_codex_prompt_with_lines(&codex_sample_entries(), "s1", &lines).unwrap();
+        assert_eq!(
+            prompt,
+            "[Session: s1]\n\
+             [META] s1\n\
+             [USER] q\n\
+             [SUBAGENT] Ada: review\n\
+             [SUBAGENT_RESULT] ok\n\
+             [ASSISTANT] a\n"
+        );
+        let roles: Vec<String> = extract_codex_messages_with_lines(&codex_sample_entries(), &lines)
+            .into_iter()
+            .map(|(role, _)| role)
+            .collect();
+        assert_eq!(
+            roles,
+            vec!["META", "USER", "SUBAGENT", "SUBAGENT_RESULT", "ASSISTANT"]
+        );
+    }
+
+    #[test]
+    fn test_build_codex_prompt_keeps_agent_message_as_event_marker() {
+        let mut entries = codex_sample_entries();
+        entries.push(CodexEntry::AgentMessage {
+            timestamp: "2026-03-11T10:20:00Z".parse().unwrap(),
+            recipient: "/root".to_string(),
+            text: "AGENT_MESSAGE_BODY".to_string(),
+        });
+        let prompt = build_codex_prompt(&entries, "s1").unwrap();
+        // Same marker the parser produced before it read agent messages.
+        assert!(
+            prompt.ends_with("[ASSISTANT] a\n[EVENT:response_item]\n"),
+            "{prompt}"
+        );
+        assert!(!prompt.contains("AGENT_MESSAGE_BODY"));
+    }
+
+    #[test]
+    fn test_build_codex_prompt_with_no_lines_matches_build_codex_prompt() {
+        let entries = codex_sample_entries();
+        assert_eq!(
+            build_codex_prompt_with_lines(&entries, "s1", &[]).unwrap(),
+            build_codex_prompt(&entries, "s1").unwrap()
+        );
+        assert_eq!(
+            extract_codex_messages_with_lines(&entries, &[]),
+            extract_codex_messages(&entries)
+        );
+    }
+
+    #[test]
+    fn test_estimate_line_tokens_counts_line_text() {
+        let lines = vec![
+            timed_line("2026-03-11T10:05:00Z", "SUBAGENT", "abcd"),
+            timed_line("2026-03-11T10:05:00Z", "SUBAGENT_RESULT", "가나"),
+        ];
+        assert_eq!(estimate_line_tokens(&lines), 3);
+        assert_eq!(estimate_line_tokens(&[]), 0);
     }
 
     #[test]

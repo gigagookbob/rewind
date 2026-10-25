@@ -48,6 +48,7 @@ Dependency direction: `commands` and `doctor` → `sources` → `parser` and `an
 - Log location: `~/.claude/projects/` subdirectory JSONL files
 - Format: Each line is an independent JSON object
 - Excluded: automated sessions (SDK runs, hooks) unless `--include-automated` or `[input.claude] include_automated = true`
+- Subagents: records in `<project>/<session>/subagents/agent-<agentId>.jsonl` (workflow ones in `subagents/workflows/<id>/`) are not sessions. The first user text and the last assistant text go into the parent prompt where the parent got the tool result with the same `agentId`, or at the record's first timestamp. Without a record file, the parent's `toolUseResult.prompt` and `content` are used
 
 ### Codex
 
@@ -57,6 +58,11 @@ Dependency direction: `commands` and `doctor` → `sources` → `parser` and `an
 - Entry types: session_meta, response_item, event_msg, turn_context
 - Parser: Two-stage conversion (CodexRawEntry → CodexEntry)
 - Excluded: sessions with explicit subagent metadata in `session_meta`
+- Subagents: attached to the interactive parent by following `source.subagent.thread_spawn.parent_thread_id` (through other subagents if needed). Forked rollouts start with a copy of the parent's history, so the task is the first `agent_message` whose `recipient` is the subagent's `agent_path`, and the result is the last answer after it
+
+### Subagent lines
+
+`sources/subagent.rs` turns each parent session's subagent runs into `[SUBAGENT] <name>: <task>` and `[SUBAGENT_RESULT] <answer>` lines. Both texts go through `compact_log_like`, then tasks are capped at 2,000 characters each and 6,000 per session, and answers at 8,000 each and 24,000 per session; longer text keeps its first two thirds and last third around a `[... N자 생략 ...]` marker. The prompt builders in `analyzer/prompt.rs` take these as time-stamped lines (`TimedLine`) and put each before the first parent message stamped later, so `analyzer` still does not know about `sources`. Subagents never enter the session count or the cache fingerprint.
 
 ### Antigravity
 
@@ -93,8 +99,9 @@ rwd/
 │   │   └── background.rs# 백그라운드 프로세스, 잠금과 알림
 │   ├── sources/         # 에이전트별 로그 어댑터 (SourceAdapter)
 │   │   ├── mod.rs       # 어댑터 계약, 공통 타입, registered_adapters
-│   │   ├── claude.rs    # Claude Code 세션 수집
-│   │   ├── codex.rs     # Codex 세션 수집
+│   │   ├── claude.rs    # Claude Code 세션 수집, subagents/ 기록 붙이기
+│   │   ├── codex.rs     # Codex 세션 수집, 서브에이전트를 부모 세션에 붙이기
+│   │   ├── subagent.rs  # 서브에이전트 줄 만들기와 길이 상한
 │   │   └── antigravity.rs # Antigravity 대화 수집, agy -p 실행 빼기
 │   ├── doctor.rs        # 설치, 설정과 로그 폴더 진단
 │   ├── messages.rs      # Centralized user-facing strings

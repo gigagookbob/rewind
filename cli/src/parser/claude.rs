@@ -56,6 +56,78 @@ pub struct UserEntry {
     /// Summary Claude Code writes when it compacts a conversation.
     #[serde(default)]
     pub is_compact_summary: bool,
+    /// Structured result of the tool this entry answers. Only the fields a
+    /// Task/Agent subagent run carries are kept (see `subagent_tool_result`).
+    #[serde(default)]
+    pub tool_use_result: Option<ToolUseResult>,
+}
+
+/// `toolUseResult` on a user entry. Other tools store plain strings or
+/// unrelated objects here; those land in `Other` and are dropped.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum ToolUseResult {
+    Fields(ToolUseResultFields),
+    Other(serde::de::IgnoredAny),
+}
+
+/// The `toolUseResult` fields a subagent run records. Verified: all 24
+/// parent-side subagent results carry `agentId` and `prompt`; the 18 sync
+/// runs also carry `agentType` and `content` text blocks (SPEC.md, stage 4).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolUseResultFields {
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub agent_type: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub content: Option<serde_json::Value>,
+}
+
+/// Parent-side view of one subagent run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentToolResult {
+    pub agent_id: String,
+    pub agent_type: Option<String>,
+    /// Task the parent sent.
+    pub prompt: String,
+    /// Final answer text; empty for async launches.
+    pub content: String,
+}
+
+/// Returns the subagent run this user entry reports, if any.
+pub fn subagent_tool_result(entry: &UserEntry) -> Option<SubagentToolResult> {
+    let Some(ToolUseResult::Fields(fields)) = &entry.tool_use_result else {
+        return None;
+    };
+    let agent_id = fields.agent_id.as_deref()?.trim();
+    if agent_id.is_empty() {
+        return None;
+    }
+    let content = match &fields.content {
+        Some(serde_json::Value::String(text)) => text.clone(),
+        Some(serde_json::Value::Array(blocks)) => blocks
+            .iter()
+            .filter(|block| block.get("type").and_then(serde_json::Value::as_str) == Some("text"))
+            .filter_map(|block| block.get("text").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    };
+    Some(SubagentToolResult {
+        agent_id: agent_id.to_string(),
+        agent_type: fields
+            .agent_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string),
+        prompt: fields.prompt.clone().unwrap_or_default(),
+        content,
+    })
 }
 
 /// Assistant (AI) response entry.
@@ -240,6 +312,54 @@ pub fn list_session_files(project_dir: &Path) -> Result<Vec<PathBuf>, super::Par
     }
 
     Ok(files)
+}
+
+/// Subagent record file name prefix: `agent-<agentId>.jsonl`.
+pub const SUBAGENT_FILE_PREFIX: &str = "agent-";
+/// Folder under `subagents/` that holds workflow-spawned records.
+/// Verified: 39 of 63 record files sit in `subagents/workflows/<id>/`.
+const SUBAGENT_WORKFLOWS_DIR: &str = "workflows";
+/// `subagents/` is at most two levels deep (`workflows/<id>/`); the limit also
+/// stops symlink loops.
+const SUBAGENT_DIR_MAX_DEPTH: usize = 3;
+
+/// Lists `agent-*.jsonl` record files under a session's `subagents/` folder,
+/// sorted by path. The flag is true for files under `subagents/workflows/`.
+/// A missing or unreadable folder yields an empty list.
+pub fn list_subagent_files(subagents_dir: &Path) -> Vec<(PathBuf, bool)> {
+    let mut files = Vec::new();
+    collect_subagent_files(subagents_dir, false, 0, &mut files);
+    files.sort();
+    files
+}
+
+fn collect_subagent_files(
+    dir: &Path,
+    in_workflows: bool,
+    depth: usize,
+    out: &mut Vec<(PathBuf, bool)>,
+) {
+    if depth >= SUBAGENT_DIR_MAX_DEPTH {
+        return;
+    }
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let workflows =
+                in_workflows || (depth == 0 && entry.file_name() == SUBAGENT_WORKFLOWS_DIR);
+            collect_subagent_files(&path, workflows, depth + 1, out);
+        } else if path.extension().is_some_and(|ext| ext == "jsonl")
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with(SUBAGENT_FILE_PREFIX))
+        {
+            out.push((path, in_workflows));
+        }
+    }
 }
 
 // === JSONL parsing functions ===
@@ -636,6 +756,88 @@ mod tests {
         let json = r#"{"type":"file-history-snapshot","messageId":"abc-123","snapshot":{"messageId":"abc-123","trackedFileBackups":{},"timestamp":"2026-03-11T13:06:07.216Z"},"isSnapshotUpdate":false}"#;
         let entry: LogEntry = serde_json::from_str(json).unwrap();
         assert!(matches!(entry, LogEntry::FileHistorySnapshot(_)));
+    }
+
+    fn user_entry(json: &str) -> UserEntry {
+        match serde_json::from_str::<LogEntry>(json).expect("user entry") {
+            LogEntry::User(entry) => entry,
+            other => panic!("Expected User entry, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_subagent_tool_result_reads_sync_agent_fields() {
+        let entry = user_entry(
+            r#"{"type":"user","sessionId":"s1","timestamp":"2026-03-11T10:00:00Z","uuid":"u1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"x"}]},"toolUseResult":{"status":"completed","agentId":"a1","agentType":"Explore","prompt":"find x","content":[{"type":"text","text":"found"},{"type":"text","text":"x"}],"totalTokens":10}}"#,
+        );
+        let result = subagent_tool_result(&entry).expect("subagent result");
+        assert_eq!(result.agent_id, "a1");
+        assert_eq!(result.agent_type.as_deref(), Some("Explore"));
+        assert_eq!(result.prompt, "find x");
+        assert_eq!(result.content, "found\nx");
+    }
+
+    #[test]
+    fn test_subagent_tool_result_async_launch_has_no_content() {
+        let entry = user_entry(
+            r#"{"type":"user","sessionId":"s1","timestamp":"2026-03-11T10:00:00Z","uuid":"u1","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"a2","prompt":"run it","outputFile":"/tmp/x"}}"#,
+        );
+        let result = subagent_tool_result(&entry).expect("subagent result");
+        assert_eq!(result.agent_id, "a2");
+        assert_eq!(result.agent_type, None);
+        assert_eq!(result.content, "");
+    }
+
+    #[test]
+    fn test_subagent_tool_result_ignores_other_tool_results() {
+        for tool_use_result in [
+            r#""Error: file not found""#,
+            r#"{"stdout":"ok","stderr":"","interrupted":false}"#,
+            r#"{"agentId":"","prompt":"empty id"}"#,
+            r#"{"file":{"filePath":"a.rs","content":"fn main() {}"}}"#,
+        ] {
+            let entry = user_entry(&format!(
+                r#"{{"type":"user","sessionId":"s1","timestamp":"2026-03-11T10:00:00Z","uuid":"u1","toolUseResult":{tool_use_result}}}"#
+            ));
+            assert!(
+                subagent_tool_result(&entry).is_none(),
+                "{tool_use_result} is not a subagent result"
+            );
+        }
+    }
+
+    #[test]
+    fn test_list_subagent_files_finds_plain_and_workflow_records() {
+        let base = std::env::temp_dir().join(format!(
+            "rwd_test_claude_subagent_files_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+        let subagents = base.join("subagents");
+        let workflow = subagents.join("workflows").join("wf_1");
+        std::fs::create_dir_all(&workflow).expect("workflow dir");
+        for path in [
+            subagents.join("agent-a1.jsonl"),
+            subagents.join("agent-a1.meta.json"),
+            subagents.join("notes.jsonl"),
+            workflow.join("agent-w1.jsonl"),
+        ] {
+            std::fs::write(path, "").expect("file");
+        }
+
+        let files = list_subagent_files(&subagents);
+        std::fs::remove_dir_all(&base).ok();
+
+        assert_eq!(
+            files,
+            vec![
+                (subagents.join("agent-a1.jsonl"), false),
+                (workflow.join("agent-w1.jsonl"), true),
+            ]
+        );
+        assert!(list_subagent_files(&base.join("missing")).is_empty());
     }
 
     #[test]

@@ -1,16 +1,24 @@
 //! Codex adapter: reads `<root>/YYYY/MM/DD/rollout-*.jsonl` session logs.
+//! Subagent rollouts are not sessions; their task and result are spliced
+//! into the interactive parent's prompt (SPEC.md, stage 4).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 
+use super::subagent::{self, SubagentRun};
 use super::{CollectContext, CollectedSession, SourceAdapter, SourceCollection, SourceFingerprint};
 use crate::parser::codex::{self, CodexEntry};
 use crate::{analyzer, config, parser};
 
 /// Exclusion reason for sessions spawned by another Codex session.
 pub const EXCLUDED_SUBAGENT: &str = "subagent";
+/// Name used when a subagent rollout has no `agent_nickname`.
+const SUBAGENT_NAME_DEFAULT: &str = "subagent";
+/// Steps followed up `parent_thread_id` links. Measured chains are at most 2
+/// deep (45 depth-1, 5 depth-2); the cap only guards against cycles.
+const MAX_SUBAGENT_CHAIN: usize = 8;
 
 #[derive(Debug, Default)]
 pub struct CodexAdapter {
@@ -97,13 +105,17 @@ impl SourceAdapter for CodexAdapter {
             }
         }
 
-        let mut subagent_count = 0;
+        let mut subagent_rollouts = Vec::new();
         let mut sessions = Vec::new();
-        for mut entries in merged_entries.into_values() {
+        for (merge_key, mut entries) in merged_entries {
             entries = codex::dedupe_entries(entries);
             codex::sort_entries_by_timestamp(&mut entries);
             if codex::classify_codex_session(&entries) == codex::CodexSessionKind::Subagent {
-                subagent_count += 1;
+                let own_id = match merge_key {
+                    SessionMergeKey::SessionId(id) => Some(id),
+                    SessionMergeKey::RootAndFile { .. } => None,
+                };
+                subagent_rollouts.push((own_id, entries));
                 continue;
             }
             let summary = codex::summarize_codex_entries(&entries);
@@ -126,10 +138,22 @@ impl SourceAdapter for CodexAdapter {
             }
         });
 
+        let interactive_ids: HashSet<&str> = sessions
+            .iter()
+            .map(|(summary, _)| summary.session_id.as_str())
+            .collect();
+        let attachment = attach_subagents(&subagent_rollouts, &interactive_ids, ctx.date);
+
         let entry_count = sessions.iter().map(|(_, entries)| entries.len()).sum();
         let mut collected = Vec::with_capacity(sessions.len());
         for (summary, entries) in &sessions {
-            let task = analyzer::build_codex_session_task(entries, &summary.session_id, Self::ID)?;
+            let lines = attachment
+                .runs_by_parent
+                .get(&summary.session_id)
+                .map(|runs| subagent::subagent_lines(runs))
+                .unwrap_or_default();
+            let task =
+                analyzer::build_codex_session_task(entries, &summary.session_id, Self::ID, &lines)?;
             collected.push(CollectedSession {
                 task,
                 first_activity: activity_timestamps(entries).min(),
@@ -145,10 +169,167 @@ impl SourceAdapter for CodexAdapter {
                 entry_count,
             },
             sessions: collected,
-            excluded: vec![(EXCLUDED_SUBAGENT, subagent_count)],
-            verbose_lines: Vec::new(),
+            excluded: vec![(EXCLUDED_SUBAGENT, subagent_rollouts.len())],
+            verbose_lines: vec![crate::messages::verbose::subagents(
+                self.display_name(),
+                attachment.attached,
+                attachment.unattached,
+            )],
         })
     }
+}
+
+/// Subagent runs grouped by the interactive session they belong to.
+struct SubagentAttachment {
+    runs_by_parent: HashMap<String, Vec<SubagentRun>>,
+    attached: usize,
+    /// Runs whose `parent_thread_id` chain reaches no session of the day.
+    unattached: usize,
+}
+
+/// What a subagent rollout's own `session_meta` says about its spawn.
+struct SpawnInfo<'a> {
+    parent_thread_id: Option<&'a str>,
+    agent_path: Option<&'a str>,
+    nickname: Option<&'a str>,
+    started: DateTime<Utc>,
+}
+
+/// Links each subagent rollout to its interactive parent by following
+/// `parent_thread_id` up through other subagents (depth 2 and beyond).
+fn attach_subagents(
+    rollouts: &[(Option<String>, Vec<CodexEntry>)],
+    interactive_ids: &HashSet<&str>,
+    date: NaiveDate,
+) -> SubagentAttachment {
+    let infos: Vec<Option<SpawnInfo>> = rollouts
+        .iter()
+        .map(|(own_id, entries)| own_id.as_deref().and_then(|id| own_spawn_info(entries, id)))
+        .collect();
+    let parent_of: HashMap<&str, &str> = rollouts
+        .iter()
+        .zip(&infos)
+        .filter_map(|((own_id, _), info)| {
+            Some((own_id.as_deref()?, info.as_ref()?.parent_thread_id?))
+        })
+        .collect();
+
+    let mut runs_by_parent: HashMap<String, Vec<SubagentRun>> = HashMap::new();
+    let mut unattached = 0;
+    for ((_, entries), info) in rollouts.iter().zip(&infos) {
+        let root = info
+            .as_ref()
+            .and_then(|info| info.parent_thread_id)
+            .and_then(|parent| resolve_interactive_parent(parent, &parent_of, interactive_ids));
+        let (Some(info), Some(root)) = (info, root) else {
+            unattached += 1;
+            continue;
+        };
+        let (task, result) = subagent_task_and_result(entries, info.agent_path);
+        let at = entries
+            .iter()
+            .filter(|entry| !matches!(entry, CodexEntry::SessionMeta { .. }))
+            .filter_map(codex::entry_timestamp)
+            .min()
+            .unwrap_or(info.started);
+        runs_by_parent
+            .entry(root.to_string())
+            .or_default()
+            .push(SubagentRun {
+                name: info.nickname.unwrap_or(SUBAGENT_NAME_DEFAULT).to_string(),
+                task,
+                result,
+                at,
+            });
+    }
+
+    let mut attached = 0;
+    runs_by_parent.retain(|_, runs| {
+        *runs = subagent::keep_target_date(std::mem::take(runs), date);
+        attached += runs.len();
+        !runs.is_empty()
+    });
+    SubagentAttachment {
+        runs_by_parent,
+        attached,
+        unattached,
+    }
+}
+
+/// Reads the `session_meta` line of the rollout itself. Forked rollouts also
+/// carry a copy of the parent's `session_meta`, which is skipped here.
+fn own_spawn_info<'a>(entries: &'a [CodexEntry], own_id: &str) -> Option<SpawnInfo<'a>> {
+    entries.iter().find_map(|entry| match entry {
+        CodexEntry::SessionMeta {
+            timestamp,
+            session_id,
+            agent_nickname,
+            parent_thread_id,
+            agent_path,
+            ..
+        } if session_id == own_id => Some(SpawnInfo {
+            parent_thread_id: parent_thread_id.as_deref(),
+            agent_path: agent_path.as_deref(),
+            nickname: agent_nickname.as_deref(),
+            started: *timestamp,
+        }),
+        _ => None,
+    })
+}
+
+fn resolve_interactive_parent<'a>(
+    mut current: &'a str,
+    parent_of: &HashMap<&'a str, &'a str>,
+    interactive_ids: &HashSet<&str>,
+) -> Option<&'a str> {
+    for _ in 0..MAX_SUBAGENT_CHAIN {
+        if interactive_ids.contains(current) {
+            return Some(current);
+        }
+        current = parent_of.get(current)?;
+    }
+    None
+}
+
+/// Task = first `agent_message` sent to this agent; result = last answer
+/// after it. Forked rollouts start with a copy of the parent's history, so
+/// nothing before that message belongs to the subagent. Rollouts without
+/// such a message (older format, no copied history) use the first user text.
+fn subagent_task_and_result(entries: &[CodexEntry], agent_path: Option<&str>) -> (String, String) {
+    let to_me = agent_path.and_then(|path| {
+        entries
+            .iter()
+            .enumerate()
+            .find_map(|(index, entry)| match entry {
+                CodexEntry::AgentMessage {
+                    recipient, text, ..
+                } if recipient == path => Some((index, text.clone())),
+                _ => None,
+            })
+    });
+    let (task, own_entries) = match to_me {
+        Some((index, text)) => (text, &entries[index + 1..]),
+        None => {
+            let first_user = entries.iter().find_map(|entry| match entry {
+                CodexEntry::UserMessage { text, .. } if !text.trim().is_empty() => {
+                    Some(text.clone())
+                }
+                _ => None,
+            });
+            (first_user.unwrap_or_default(), entries)
+        }
+    };
+    let result = own_entries
+        .iter()
+        .rev()
+        .find_map(|entry| match entry {
+            CodexEntry::AssistantMessage { output_text, .. } if !output_text.trim().is_empty() => {
+                Some(output_text.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+    (task, result)
 }
 
 /// Returns timestamps of conversation activity, skipping `SessionMeta`.
@@ -160,7 +341,9 @@ fn activity_timestamps(entries: &[CodexEntry]) -> impl Iterator<Item = DateTime<
         CodexEntry::UserMessage { timestamp, .. }
         | CodexEntry::AssistantMessage { timestamp, .. }
         | CodexEntry::FunctionCall { timestamp, .. } => Some(*timestamp),
-        CodexEntry::SessionMeta { .. } | CodexEntry::Other { .. } => None,
+        CodexEntry::SessionMeta { .. }
+        | CodexEntry::AgentMessage { .. }
+        | CodexEntry::Other { .. } => None,
     })
 }
 
@@ -416,6 +599,219 @@ mod tests {
                 session_count: 1,
                 entry_count: 3,
             }
+        );
+    }
+
+    fn subagent_meta(ts: &str, id: &str, parent: &str, path: &str, nickname: &str) -> String {
+        format!(
+            r#"{{"timestamp":"{ts}","type":"session_meta","payload":{{"id":"{id}","forked_from_id":"{parent}","cwd":"/project","model_provider":"openai","history_mode":"paginated","source":{{"subagent":{{"thread_spawn":{{"parent_thread_id":"{parent}","depth":1,"agent_path":"{path}","agent_nickname":"{nickname}","agent_role":null}}}}}},"agent_nickname":"{nickname}","agent_path":"{path}"}}}}"#
+        )
+    }
+
+    fn agent_message(ts: &str, author: &str, recipient: &str, text: &str) -> String {
+        format!(
+            r#"{{"timestamp":"{ts}","type":"response_item","payload":{{"type":"agent_message","author":"{author}","recipient":"{recipient}","content":[{{"type":"input_text","text":"{text}"}}]}}}}"#
+        )
+    }
+
+    fn assistant(ts: &str, text: &str) -> String {
+        format!(
+            r#"{{"timestamp":"{ts}","type":"response_item","payload":{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"{text}"}}]}}}}"#
+        )
+    }
+
+    /// Interactive parent `codex-parent` and its forked subagent `codex-child`
+    /// (Ada), whose rollout starts with a copy of the parent's history.
+    fn write_parent_and_forked_child(day_dir: &std::path::Path) {
+        std::fs::create_dir_all(day_dir).expect("day dir");
+        std::fs::write(
+            day_dir.join("rollout-parent.jsonl"),
+            [
+                r#"{"timestamp":"2099-01-01T12:00:00Z","type":"session_meta","payload":{"id":"codex-parent","cwd":"/project","model_provider":"openai","source":"cli"}}"#.to_string(),
+                r#"{"timestamp":"2099-01-01T12:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"PARENT_FIRST_QUESTION"}]}}"#.to_string(),
+                r#"{"timestamp":"2099-01-01T12:02:00Z","type":"response_item","payload":{"type":"function_call","name":"spawn_agent","arguments":"{\"message\":\"SPAWN_ARG_MARKER\"}"}}"#.to_string(),
+                agent_message("2099-01-01T12:10:00Z", "/root/ada", "/root", "CHILD_REPORT_COPY"),
+                assistant("2099-01-01T12:11:00Z", "Thanks, merged."),
+            ]
+            .join("\n"),
+        )
+        .expect("parent rollout");
+        std::fs::write(
+            day_dir.join("rollout-child.jsonl"),
+            [
+                subagent_meta("2099-01-01T12:02:00.100Z", "codex-child", "codex-parent", "/root/ada", "Ada"),
+                r#"{"timestamp":"2099-01-01T12:02:00.200Z","type":"session_meta","payload":{"id":"codex-parent","cwd":"/project","model_provider":"openai","source":"cli"}}"#.to_string(),
+                r#"{"timestamp":"2099-01-01T12:02:00.300Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"PARENT_FIRST_QUESTION"}]}}"#.to_string(),
+                assistant("2099-01-01T12:02:00.400Z", "COPIED_PARENT_ANSWER"),
+                agent_message("2099-01-01T12:02:01Z", "/root", "/root/ada", "Check parser edge cases"),
+                assistant("2099-01-01T12:03:00Z", "SUBAGENT_MIDDLE_TEXT"),
+                r#"{"timestamp":"2099-01-01T12:04:00Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"TOOL_ARG_MARKER\"}"}}"#.to_string(),
+                assistant("2099-01-01T12:09:00Z", "Found two edge cases"),
+            ]
+            .join("\n"),
+        )
+        .expect("child rollout");
+    }
+
+    #[test]
+    fn test_collect_attaches_forked_subagent_task_and_result_to_parent() {
+        let base = unique_temp_dir("rwd_test_sources_codex_subagent_attach");
+        write_parent_and_forked_child(&base.join("2099/01/01"));
+
+        let collection = collect(vec![base.clone()]);
+        std::fs::remove_dir_all(&base).ok();
+
+        assert_eq!(collection.sessions.len(), 1);
+        let task = &collection.sessions[0].task;
+        assert_eq!(task.session_id, "codex-parent");
+        let prompt = &task.prompt_text;
+        assert!(
+            prompt.contains(
+                "[TOOL] spawn_agent\n\
+                 [SUBAGENT] Ada: Check parser edge cases\n\
+                 [SUBAGENT_RESULT] Found two edge cases\n\
+                 [EVENT:response_item]\n"
+            ),
+            "{prompt}"
+        );
+        for marker in [
+            "COPIED_PARENT_ANSWER",
+            "SUBAGENT_MIDDLE_TEXT",
+            "TOOL_ARG_MARKER",
+            "SPAWN_ARG_MARKER",
+            "CHILD_REPORT_COPY",
+        ] {
+            assert!(!prompt.contains(marker), "{marker} leaked:\n{prompt}");
+        }
+        assert_eq!(prompt.matches("PARENT_FIRST_QUESTION").count(), 1);
+    }
+
+    #[test]
+    fn test_collect_subagents_stay_out_of_codex_session_count_and_fingerprint() {
+        let base = unique_temp_dir("rwd_test_sources_codex_subagent_count");
+        write_parent_and_forked_child(&base.join("2099/01/01"));
+
+        let collection = collect(vec![base.clone()]);
+        std::fs::remove_dir_all(&base).ok();
+
+        assert_eq!(
+            collection.fingerprint,
+            SourceFingerprint {
+                session_count: 1,
+                entry_count: 5,
+            }
+        );
+        assert_eq!(collection.excluded, vec![(EXCLUDED_SUBAGENT, 1)]);
+        assert_eq!(
+            collection.verbose_lines,
+            vec!["[discover] Codex subagents: 1 attached".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_collect_attaches_nested_subagent_to_interactive_parent() {
+        let base = unique_temp_dir("rwd_test_sources_codex_subagent_nested");
+        let day_dir = base.join("2099/01/01");
+        write_parent_and_forked_child(&day_dir);
+        std::fs::write(
+            day_dir.join("rollout-grandchild.jsonl"),
+            [
+                subagent_meta(
+                    "2099-01-01T12:05:00Z",
+                    "codex-grandchild",
+                    "codex-child",
+                    "/root/ada/bo",
+                    "Bo",
+                ),
+                agent_message(
+                    "2099-01-01T12:05:01Z",
+                    "/root/ada",
+                    "/root/ada/bo",
+                    "Dig deeper",
+                ),
+                assistant("2099-01-01T12:06:00Z", "Deep result"),
+            ]
+            .join("\n"),
+        )
+        .expect("grandchild rollout");
+
+        let collection = collect(vec![base.clone()]);
+        std::fs::remove_dir_all(&base).ok();
+
+        assert_eq!(collection.sessions.len(), 1);
+        let prompt = &collection.sessions[0].task.prompt_text;
+        assert!(
+            prompt.contains(
+                "[SUBAGENT_RESULT] Found two edge cases\n\
+                 [SUBAGENT] Bo: Dig deeper\n\
+                 [SUBAGENT_RESULT] Deep result\n\
+                 [EVENT:response_item]\n"
+            ),
+            "{prompt}"
+        );
+        assert_eq!(collection.excluded, vec![(EXCLUDED_SUBAGENT, 2)]);
+    }
+
+    #[test]
+    fn test_collect_counts_subagent_without_parent_session_in_verbose_only() {
+        let base = unique_temp_dir("rwd_test_sources_codex_subagent_orphan");
+        let day_dir = base.join("2099/01/01");
+        write_parent_and_forked_child(&day_dir);
+        std::fs::write(
+            day_dir.join("rollout-orphan.jsonl"),
+            [
+                subagent_meta(
+                    "2099-01-01T13:00:00Z",
+                    "codex-orphan",
+                    "missing-parent",
+                    "/root/zed",
+                    "Zed",
+                ),
+                agent_message("2099-01-01T13:00:01Z", "/root", "/root/zed", "ORPHAN_TASK"),
+                assistant("2099-01-01T13:01:00Z", "ORPHAN_RESULT"),
+            ]
+            .join("\n"),
+        )
+        .expect("orphan rollout");
+
+        let collection = collect(vec![base.clone()]);
+        std::fs::remove_dir_all(&base).ok();
+
+        let prompt = &collection.sessions[0].task.prompt_text;
+        assert!(!prompt.contains("ORPHAN_TASK"));
+        assert!(!prompt.contains("ORPHAN_RESULT"));
+        assert_eq!(
+            collection.verbose_lines,
+            vec![
+                "[discover] Codex subagents: 1 attached, 1 not attached (no parent session found)"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_collect_subagent_without_agent_message_uses_first_user_text() {
+        let base = unique_temp_dir("rwd_test_sources_codex_subagent_legacy");
+        let day_dir = base.join("2099/01/01");
+        write_parent_and_forked_child(&day_dir);
+        std::fs::write(
+            day_dir.join("rollout-legacy.jsonl"),
+            [
+                subagent_meta("2099-01-01T12:20:00Z", "codex-legacy", "codex-parent", "/root/rex", "Rex"),
+                r##"{"timestamp":"2099-01-01T12:20:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>ctx</environment_context>"},{"type":"input_text","text":"Legacy task"}]}}"##.to_string(),
+                assistant("2099-01-01T12:21:00Z", "Legacy result"),
+            ]
+            .join("\n"),
+        )
+        .expect("legacy rollout");
+
+        let collection = collect(vec![base.clone()]);
+        std::fs::remove_dir_all(&base).ok();
+
+        let prompt = &collection.sessions[0].task.prompt_text;
+        assert!(
+            prompt.contains("[SUBAGENT] Rex: Legacy task\n[SUBAGENT_RESULT] Legacy result\n"),
+            "{prompt}"
         );
     }
 
