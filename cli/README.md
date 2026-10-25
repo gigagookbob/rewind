@@ -170,6 +170,8 @@ Codex session filtering:
 
 Codex Desktop user `response_item` / `input_text` blocks are also supported. App-injected context is excluded, and legacy `event_msg` echoes are counted once.
 
+Codex messages send only the text itself: the typed `message` or `input_text` for user turns and the `output_text` blocks for answers. Message ids, `phase`/`status` values, and image or file references are not sent. Days analyzed before this change keep their cached result; run `rwd today --no-cache --date <date>` to redo one.
+
 Antigravity sessions:
 - Read by default from `~/.gemini/antigravity-cli/brain` (agy CLI), `~/.gemini/antigravity/brain` (Antigravity app), and `~/.gemini/antigravity-ide/brain` (Antigravity IDE). In WSL, the same folders under Windows homes are also checked.
 - Each conversation's `.system_generated/logs/transcript_full.jsonl` is the only file read in these folders. One conversation is one session.

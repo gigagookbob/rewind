@@ -57,6 +57,7 @@ Dependency direction: `commands` and `doctor` → `sources` → `parser` and `an
 - Format: Each line is `{"timestamp", "type", "payload"}` JSON object
 - Entry types: session_meta, response_item, event_msg, turn_context
 - Parser: Two-stage conversion (CodexRawEntry → CodexEntry)
+- Prompt text: user lines hold only the typed text (`event_msg` `message`, or `input_text` blocks without app-injected context) and answer lines only the `output_text` blocks. Other payload strings (ids, `phase`, `status`, image references) are dropped
 - Excluded: sessions with explicit subagent metadata in `session_meta`
 - Subagents: attached to the interactive parent by following `source.subagent.thread_spawn.parent_thread_id` (through other subagents if needed). Forked rollouts start with a copy of the parent's history, so the task is the first `agent_message` whose `recipient` is the subagent's `agent_path`, and the result is the last answer after it
 
