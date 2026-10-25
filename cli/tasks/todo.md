@@ -202,13 +202,15 @@ cargo test --locked
 **설명:** `docs/ARCHITECTURE.md`의 입력 출처와 폴더 구조에 어댑터 구조와 Antigravity를 넣고, `README.md`의 입력 설정 절에 Antigravity 지원, `[input.antigravity]` 설정, `--dry-run` 사용법을 넣습니다. 그다음 이 컴퓨터의 실제 로그로 명세의 확인 표를 돌려 봅니다.
 
 **수용 기준:**
-- [ ] `ARCHITECTURE.md`와 `README.md`가 지금 코드 구조와 설정을 설명합니다.
-- [ ] `cargo run -- today --dry-run --date 2026-08-23`에서 Antigravity 세션 7개(앱 2개, IDE 5개)와 `-p` 실행으로 뺀 대화 20개가 나옵니다.
-- [ ] `--date 2026-10-24`에서 세션 1개(`795fdfbf`), `--date 2026-10-25`에서 `-p` 실행으로 뺀 대화 1개(`d4a3e4c1`)가 나옵니다. 그 사이 파일이 지워졌거나 대화가 늘었으면 차이를 기록합니다.
+- [x] `ARCHITECTURE.md`와 `README.md`가 지금 코드 구조와 설정을 설명합니다.
+- [x] `cargo run -- today --dry-run --date 2026-08-23`에서 Antigravity 세션 7개(앱 2개, IDE 5개)와 `-p` 실행으로 뺀 대화 20개가 나옵니다.
+- [x] `--date 2026-10-24`에서 세션 1개(`795fdfbf`), `--date 2026-10-25`에서 `-p` 실행으로 뺀 대화 1개(`d4a3e4c1`)가 나옵니다. 그 사이 파일이 지워졌거나 대화가 늘었으면 차이를 기록합니다.
 
 **확인:**
-- [ ] 위 세 명령을 직접 실행(LLM을 부르지 않음)
-- [ ] `cargo run -- doctor`에 Antigravity 폴더 줄이 나옴
+- [x] 위 세 명령을 직접 실행(LLM을 부르지 않음)
+- [x] `cargo run -- doctor`에 Antigravity 폴더 줄이 나옴
+
+**확인 결과(2026-10-25):** 세 날짜 모두 기대값과 같았습니다. 2026-08-23은 세션 7개(앱 `43e33e6a`, `3540b582`, IDE 5개)와 `-p` 실행으로 뺀 agy 대화 20개, 2026-10-24는 앱 대화 `795fdfbf` 1개, 2026-10-25는 세션 0개와 뺀 대화 `d4a3e4c1` 1개입니다. `rwd doctor`는 `Antigravity roots: 3`을 보여 줍니다. 대화 폴더 59개(agy 26개, 앱 14개, IDE 19개) 중 `transcript_full.jsonl`이 있는 38개만 읽히고, 나머지 21개는 명세대로 읽지 않습니다.
 
 **의존:** 작업 5, 작업 7
 

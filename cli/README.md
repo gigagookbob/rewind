@@ -2,6 +2,8 @@
 
 CLI that turns your AI agent sessions into a daily journal. Extracts decisions, learnings, and corrections, then saves them as Obsidian Daily Notes.
 
+Reads local session logs from Claude Code, Codex, and Antigravity (agy CLI, Antigravity app, Antigravity IDE).
+
 ## rwd vs Claude Code `/insights`
 
 Claude Code has a built-in `/insights` command. rwd serves a different purpose.
@@ -123,6 +125,7 @@ enabled = false
 rwd today              # Analyze today's AI sessions → save to Obsidian Daily Notes
 rwd today --lang ko    # Override output language for this run
 rwd today --include-automated  # Include automated Claude sessions for this run
+rwd today --dry-run    # List the sessions that would be analyzed, without calling the LLM
 rwd summary            # Generate progress summary (Markdown) → save + copy to clipboard
 rwd slack              # Generate Slack-ready message → copy to clipboard
 rwd config             # Change settings (interactive menu)
@@ -135,6 +138,17 @@ rwd update             # Update to the latest version
 Update notice env toggles:
 - `RWD_DISABLE_UPDATE_CHECK=1 rwd today` — disable update notice
 - `RWD_FORCE_UPDATE_CHECK=1 cargo run -- today` — force update check even in local dev build
+
+### Preview with `--dry-run`
+
+`rwd today --dry-run` collects sessions and prints, per source, the log folder, each session (short id, time range, user and assistant message counts, estimated tokens), and how many sessions were excluded and why. It then exits.
+
+- It does not load the LLM provider, call the LLM, read or write the cache, or write Markdown, so it costs nothing and no conversation leaves your machine.
+- It works without a config file; only the default log folders are checked then.
+- It can be combined with `--date YYYY-MM-DD`, `--include-automated`, and `-v` (adds each source's diagnostics).
+- Conversation text is never printed.
+
+### Input sources
 
 Claude session filtering:
 - Default behavior excludes automated Claude sessions from `rwd today`.
@@ -153,6 +167,21 @@ Codex session filtering:
 - `cwd` patterns and prompt heuristics are not used.
 
 Codex Desktop user `response_item` / `input_text` blocks are also supported. App-injected context is excluded, and legacy `event_msg` echoes are counted once.
+
+Antigravity sessions:
+- Read by default from `~/.gemini/antigravity-cli/brain` (agy CLI), `~/.gemini/antigravity/brain` (Antigravity app), and `~/.gemini/antigravity-ide/brain` (Antigravity IDE). In WSL, the same folders under Windows homes are also checked.
+- Each conversation's `.system_generated/logs/transcript_full.jsonl` is the only file read in these folders. One conversation is one session.
+- Only your typed request, the model's thinking and answers, and tool names are sent to the LLM. Tool arguments, tool outputs, and app-added metadata are not.
+- Non-interactive `agy -p` runs are skipped by default: agy conversations whose id is not in `~/.gemini/antigravity-cli/history.jsonl` and that have at most one prompt. Only conversation ids are read from that file. App and IDE conversations are never skipped this way.
+- Token usage is not recorded for Antigravity, so no token totals are shown for it.
+- Settings (all optional):
+```toml
+[input.antigravity]
+enabled = true              # set to false to keep Antigravity out of rwd
+roots = []                  # extra brain folders, searched before the defaults
+include_print_mode = false  # set to true to also analyze agy -p runs
+```
+- `rwd doctor` and `rwd today -v` show which Antigravity folders were found.
 
 ## Release policy (maintainers)
 
