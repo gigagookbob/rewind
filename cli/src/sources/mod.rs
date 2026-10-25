@@ -7,8 +7,6 @@
 pub mod antigravity;
 pub mod claude;
 pub mod codex;
-// Called by the Claude and Codex adapters from tasks 11 and 12 (tasks/plan.md).
-#[allow(dead_code)]
 pub mod subagent;
 
 use chrono::{DateTime, NaiveDate, Utc};

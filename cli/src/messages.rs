@@ -613,6 +613,18 @@ pub mod verbose {
         format!("[discover] Antigravity: skipped {path}: {error}")
     }
 
+    /// Subagent runs spliced into parent prompts; `unattached` ones had no
+    /// parent session among today's sessions.
+    pub fn subagents(source: &str, attached: usize, unattached: usize) -> String {
+        if unattached == 0 {
+            format!("[discover] {source} subagents: {attached} attached")
+        } else {
+            format!(
+                "[discover] {source} subagents: {attached} attached, {unattached} not attached (no parent session found)"
+            )
+        }
+    }
+
     pub fn claude_session_mix(
         interactive: usize,
         automated: usize,

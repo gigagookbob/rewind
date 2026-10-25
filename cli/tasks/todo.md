@@ -289,14 +289,16 @@ cargo test --locked
 **설명:** `parser/claude.rs`의 사용자 항목에 `toolUseResult`를 선택 필드로 받습니다. Claude 어댑터는 그날 세션마다 `<프로젝트>/<세션 ID>/subagents/` 아래(하위 폴더 포함)의 `agent-*.jsonl`을 읽어, 첫 `user` 글을 맡긴 일로, 마지막 `assistant` 글을 최종 결과로 씁니다. 부모 기록에 같은 `agentId`의 도구 결과가 있으면 그 시각에, 없으면 기록 파일의 첫 시각에 붙입니다. 이름은 부모 기록의 `agentType`, 없으면 workflow 파일은 `workflow`, 그 밖은 `subagent`입니다. 기록 파일이 없을 때만 부모 기록의 `toolUseResult.prompt`와 `content`를 씁니다. `-v`에 붙인 서브에이전트 수를 보여 줍니다.
 
 **수용 기준:**
-- [ ] 명세 4단계의 Claude 테스트 세 가지(기록 파일 우선과 자리, 비동기와 기록 파일이 없을 때의 대체, workflow 파일)가 통과합니다.
-- [ ] 기록 파일 안의 도구 호출에 넣은 표식 문자열은 프롬프트에 없고, 서브에이전트는 세션 수와 지문에 들어가지 않습니다.
-- [ ] 서브에이전트가 없는 세션의 프롬프트는 작업 1의 고정 테스트와 같습니다.
+- [x] 명세 4단계의 Claude 테스트 세 가지(기록 파일 우선과 자리, 비동기와 기록 파일이 없을 때의 대체, workflow 파일)가 통과합니다.
+- [x] 기록 파일 안의 도구 호출에 넣은 표식 문자열은 프롬프트에 없고, 서브에이전트는 세션 수와 지문에 들어가지 않습니다.
+- [x] 서브에이전트가 없는 세션의 프롬프트는 작업 1의 고정 테스트와 같습니다.
 
 **확인:**
-- [ ] `cargo test --locked sources::claude`, `cargo test --locked parser::claude`
-- [ ] `cargo run -- today --dry-run -v`에서 Claude의 붙인 서브에이전트 수가 나옴(LLM을 부르지 않음)
-- [ ] 공통 세 명령
+- [x] `cargo test --locked sources::claude`, `cargo test --locked parser::claude`
+- [x] `cargo run -- today --dry-run -v`에서 Claude의 붙인 서브에이전트 수가 나옴(LLM을 부르지 않음)
+- [x] 공통 세 명령
+
+**확인 결과(2026-10-25):** 오늘은 Claude 서브에이전트 기록이 없어서 `[discover] Claude Code subagents: 0 attached`가 나옵니다. 기록이 있는 날짜로 돌리면 2026-06-24에 17개, 2026-08-22에 6개, 2026-08-23에 1개, 2026-10-10에 8개, 2026-10-11에 31개가 붙어서, 기록 파일 63개가 모두 붙습니다. 계획 목록 밖에서 `src/messages.rs`(`-v` 문구)와 `src/sources/mod.rs`(작업 10의 임시 `#[allow(dead_code)]` 삭제)를 고쳤습니다.
 
 **의존:** 작업 10
 
