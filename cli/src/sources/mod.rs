@@ -4,9 +4,6 @@
 //! `SessionTask`s. Commands, the cache, and `rwd doctor` only walk the
 //! adapter list, so adding an agent means adding one adapter here.
 
-// Temporary: commands switch to adapters in task 3 (tasks/plan.md); removed in task 4.
-#![allow(dead_code)]
-
 pub mod claude;
 pub mod codex;
 

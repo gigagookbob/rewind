@@ -44,7 +44,7 @@
 - [x] 작업 1: 어댑터 계약과 Claude 어댑터 만들기 (M)
 - [x] 작업 2: Codex 어댑터 만들기 (S)
 - [x] 작업 3: `run_today`, `run_slack`, 캐시, 정보 상자를 어댑터로 바꾸기 (M, 5개 파일)
-- [ ] 작업 4: `rwd doctor`, `SessionSource` 정리와 임시 허용 지우기 (M)
+- [x] 작업 4: `rwd doctor`, `SessionSource` 정리와 임시 허용 지우기 (M)
 
 ### 확인 지점 1: 1단계 끝
 

@@ -31,17 +31,11 @@ use executor::execute_plan_parallel;
 use planner::{SessionEstimate, StepStrategy};
 use std::collections::HashMap;
 
-/// Source tag for a unified analysis task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionSource {
-    Claude,
-    Codex,
-}
-
-/// Common per-session analysis input used by both Claude and Codex flows.
+/// Common per-session analysis input shared by every log source.
 #[derive(Debug, Clone)]
 pub struct SessionTask {
-    pub source: SessionSource,
+    /// Id of the source adapter that built this task (e.g. "claude"), for `-v` output.
+    pub source: &'static str,
     pub session_id: String,
     pub prompt_text: String,
     pub messages: Vec<(String, String)>,
@@ -150,7 +144,10 @@ fn entry_session_id(entry: &LogEntry) -> Option<&str> {
 }
 
 /// Builds common session tasks from Claude entries.
-pub fn build_claude_session_tasks(entries: &[LogEntry]) -> Result<Vec<SessionTask>, AnalyzerError> {
+pub fn build_claude_session_tasks(
+    entries: &[LogEntry],
+    source: &'static str,
+) -> Result<Vec<SessionTask>, AnalyzerError> {
     let session_ids = prompt::extract_session_ids(entries);
     if session_ids.is_empty() {
         return Err(crate::messages::error::NO_CONVERSATION_CLAUDE.into());
@@ -177,7 +174,7 @@ pub fn build_claude_session_tasks(entries: &[LogEntry]) -> Result<Vec<SessionTas
             .unwrap_or_else(|| prompt::estimate_prompt_tokens(&prompt_text));
 
         tasks.push(SessionTask {
-            source: SessionSource::Claude,
+            source,
             session_id,
             prompt_text,
             messages,
@@ -192,13 +189,14 @@ pub fn build_claude_session_tasks(entries: &[LogEntry]) -> Result<Vec<SessionTas
 pub fn build_codex_session_task(
     entries: &[CodexEntry],
     session_id: &str,
+    source: &'static str,
 ) -> Result<SessionTask, AnalyzerError> {
     let prompt_text = prompt::build_codex_prompt(entries, session_id)?;
     let messages = prompt::extract_codex_messages(entries);
     let estimated_tokens = prompt::estimate_prompt_tokens(&prompt_text);
 
     Ok(SessionTask {
-        source: SessionSource::Codex,
+        source,
         session_id: session_id.to_string(),
         prompt_text,
         messages,
@@ -225,12 +223,17 @@ pub async fn analyze_session_tasks(
     );
 
     if verbose {
-        let claude_tasks = tasks
+        let mut per_source: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        for task in &tasks {
+            *per_source.entry(task.source).or_default() += 1;
+        }
+        let counts = per_source
             .iter()
-            .filter(|task| task.source == SessionSource::Claude)
-            .count();
-        let codex_tasks = tasks.len().saturating_sub(claude_tasks);
-        eprintln!("• Session tasks: Claude {claude_tasks}, Codex {codex_tasks}");
+            .map(|(source, count)| format!("{source} {count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!("• Session tasks: {counts}");
     }
 
     // Build execution plan from unified tasks.

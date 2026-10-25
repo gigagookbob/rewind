@@ -22,6 +22,7 @@ impl ClaudeAdapter {
     pub const ID: &'static str = "claude";
 
     /// Reads only the given roots, skipping config overrides and home discovery.
+    #[cfg(test)]
     pub fn with_roots(roots: Vec<PathBuf>) -> Self {
         Self { roots: Some(roots) }
     }
@@ -152,7 +153,7 @@ fn build_sessions(entries: &[LogEntry]) -> Result<Vec<CollectedSession>, parser:
         return Ok(Vec::new());
     }
 
-    let tasks = analyzer::build_claude_session_tasks(entries)?;
+    let tasks = analyzer::build_claude_session_tasks(entries, ClaudeAdapter::ID)?;
 
     let mut activity: HashMap<&str, (DateTime<Utc>, DateTime<Utc>)> = HashMap::new();
     for entry in entries {

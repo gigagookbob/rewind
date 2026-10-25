@@ -92,15 +92,15 @@ cargo test --locked
 **설명:** `doctor.rs`의 로그 폴더 확인을 어댑터 목록으로 바꿉니다. `analyzer::SessionSource` enum을 지우고 `SessionTask`에 출처 id 문자열을 넣습니다. `-v`에서 쓰던 출처별 작업 수 표시는 이 id로 셉니다. `sources` 모듈의 `#[allow(dead_code)]`를 지웁니다.
 
 **수용 기준:**
-- [ ] `doctor.rs`와 `src/commands/`의 테스트가 아닌 코드에 `parser::claude`, `parser::codex` 참조가 0줄입니다(작업 전 41줄).
-- [ ] `src/sources/` 아래에 `allow(dead_code)`가 없고 Clippy 경고가 없습니다.
-- [ ] `rwd doctor`의 로그 폴더 줄을 만드는 함수가 어댑터마다 이름과 찾은 폴더 수를 한 줄씩 만든다는 테스트가 통과합니다.
+- [x] `doctor.rs`와 `src/commands/`의 테스트가 아닌 코드에 `parser::claude`, `parser::codex` 참조가 0줄입니다(작업 전 41줄).
+- [x] `src/sources/` 아래에 `allow(dead_code)`가 없고 Clippy 경고가 없습니다.
+- [x] `rwd doctor`의 로그 폴더 줄을 만드는 함수가 어댑터마다 이름과 찾은 폴더 수를 한 줄씩 만든다는 테스트가 통과합니다.
 
 **확인:**
-- [ ] `cargo test --locked doctor`, `cargo test --locked analyzer`
-- [ ] `grep -rn "allow(dead_code)" src/sources/` 결과 없음
-- [ ] `cargo run -- doctor`로 Claude Code, Codex 폴더 줄이 나오는지 직접 확인(LLM을 부르지 않음)
-- [ ] 공통 세 명령과 `cargo fmt --check`
+- [x] `cargo test --locked doctor`, `cargo test --locked analyzer`
+- [x] `grep -rn "allow(dead_code)" src/sources/` 결과 없음
+- [x] `cargo run -- doctor`로 Claude Code, Codex 폴더 줄이 나오는지 직접 확인(LLM을 부르지 않음)
+- [x] 공통 세 명령과 `cargo fmt --check`
 
 **의존:** 작업 3
 

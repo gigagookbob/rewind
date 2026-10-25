@@ -257,7 +257,7 @@ pub(super) fn print_insights(source_name: &str, analysis: &analyzer::AnalysisRes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyzer::{SessionSource, SessionTask};
+    use crate::analyzer::SessionTask;
     use crate::sources::{CollectedSession, SourceCollection};
 
     fn source(
@@ -279,7 +279,7 @@ mod tests {
     fn session(token_usage: Option<(u64, u64)>) -> CollectedSession {
         CollectedSession {
             task: SessionTask {
-                source: SessionSource::Codex,
+                source: "codex",
                 session_id: "s1".to_string(),
                 prompt_text: String::new(),
                 messages: Vec::new(),

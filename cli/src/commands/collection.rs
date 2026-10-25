@@ -58,7 +58,7 @@ pub(super) fn collect_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyzer::{SessionSource, SessionTask};
+    use crate::analyzer::SessionTask;
     use crate::sources::{CollectedSession, SourceFingerprint};
 
     struct FakeAdapter {
@@ -86,7 +86,7 @@ mod tests {
                 roots: vec![std::path::PathBuf::from("/fake")],
                 sessions: vec![CollectedSession {
                     task: SessionTask {
-                        source: SessionSource::Claude,
+                        source: "fake",
                         session_id: format!("{}-session", self.id),
                         prompt_text: "[Session]".to_string(),
                         messages: Vec::new(),

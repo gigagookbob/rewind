@@ -22,6 +22,7 @@ impl CodexAdapter {
     pub const ID: &'static str = "codex";
 
     /// Reads only the given roots, skipping config overrides and home discovery.
+    #[cfg(test)]
     pub fn with_roots(roots: Vec<PathBuf>) -> Self {
         Self { roots: Some(roots) }
     }
@@ -128,7 +129,7 @@ impl SourceAdapter for CodexAdapter {
         let entry_count = sessions.iter().map(|(_, entries)| entries.len()).sum();
         let mut collected = Vec::with_capacity(sessions.len());
         for (summary, entries) in &sessions {
-            let task = analyzer::build_codex_session_task(entries, &summary.session_id)?;
+            let task = analyzer::build_codex_session_task(entries, &summary.session_id, Self::ID)?;
             collected.push(CollectedSession {
                 task,
                 first_activity: activity_timestamps(entries).min(),
