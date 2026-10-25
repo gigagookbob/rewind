@@ -313,14 +313,16 @@ cargo test --locked
 **설명:** `parser/codex.rs`의 `SessionMeta`에서 `source.subagent.thread_spawn.parent_thread_id`와 `agent_path`를 꺼내 두고, `response_item`의 `agent_message`를 받는 쪽(`recipient`)과 `input_text` 글로 읽습니다. 부모 세션 프롬프트에서 이 줄은 지금처럼 `[EVENT:response_item]` 표시로만 남깁니다. Codex 어댑터는 서브에이전트 세션을 세션 목록과 지문에서 계속 빼되 따로 모아, `parent_thread_id`를 따라 대화형 부모까지 올라가 붙입니다. 맡긴 일은 자기 `agent_path`에게 온 첫 `agent_message` 글, 최종 결과는 그 뒤 마지막 답변, 시각은 서브에이전트 세션의 첫 시각, 이름은 `agent_nickname`입니다. 그런 메시지가 없는 예전 형식 기록은 주입 문맥을 거른 첫 사용자 글과 마지막 답변을 씁니다. `-v`에 붙인 서브에이전트 수를 보여 줍니다.
 
 **수용 기준:**
-- [ ] 서브에이전트 세션에서 자기에게 온 첫 `agent_message` 글과 그 뒤 마지막 답변이 부모 세션 프롬프트에 들어가고, 앞부분에 복사된 부모 대화의 글은 맡긴 일이나 결과로 들어가지 않습니다. 서브에이전트는 세션 수와 지문에 들어가지 않습니다.
-- [ ] 서브에이전트가 부른 서브에이전트(깊이 2)는 대화형 부모에 붙습니다. 부모를 찾지 못한 서브에이전트는 붙이지 않고 `-v`에 수만 보여 줍니다.
-- [ ] 서브에이전트가 없는 세션의 프롬프트는 작업 2의 고정 테스트와 같습니다.
+- [x] 서브에이전트 세션에서 자기에게 온 첫 `agent_message` 글과 그 뒤 마지막 답변이 부모 세션 프롬프트에 들어가고, 앞부분에 복사된 부모 대화의 글은 맡긴 일이나 결과로 들어가지 않습니다. 서브에이전트는 세션 수와 지문에 들어가지 않습니다.
+- [x] 서브에이전트가 부른 서브에이전트(깊이 2)는 대화형 부모에 붙습니다. 부모를 찾지 못한 서브에이전트는 붙이지 않고 `-v`에 수만 보여 줍니다.
+- [x] 서브에이전트가 없는 세션의 프롬프트는 작업 2의 고정 테스트와 같습니다.
 
 **확인:**
-- [ ] `cargo test --locked sources::codex`, `cargo test --locked parser::codex`
-- [ ] `cargo run -- today --dry-run -v`에서 Codex의 붙인 서브에이전트 수가 나옴(LLM을 부르지 않음)
-- [ ] 공통 세 명령
+- [x] `cargo test --locked sources::codex`, `cargo test --locked parser::codex`
+- [x] `cargo run -- today --dry-run -v`에서 Codex의 붙인 서브에이전트 수가 나옴(LLM을 부르지 않음)
+- [x] 공통 세 명령
+
+**확인 결과(2026-10-25):** 오늘 `--dry-run -v`에서 `[discover] Codex subagents: 46 attached`가 나오고, Codex 세션 수는 12개 그대로입니다. 2026-10-21은 4개가 붙어서, 이 컴퓨터의 thread_spawn 서브에이전트 50개가 모두 붙습니다. 부모를 찾지 못한 서브에이전트는 두 날짜 모두 0개였습니다. 계획 목록 밖에서 `src/analyzer/prompt.rs`(부모 프롬프트에서 `agent_message`를 예전과 같은 `[EVENT:response_item]` 표시로 남기는 줄과 테스트의 새 칸)를 고쳤습니다. `AssistantMessage`에는 `output_text` 블록 글만 담는 칸을 더했습니다. 프롬프트용 글에는 같은 답변이 JSON 값 조각과 함께 한 번 더 들어 있어서, 결과로 그대로 쓰면 8,000자 몫의 절반을 같은 글이 차지하기 때문입니다.
 
 **의존:** 작업 10
 

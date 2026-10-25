@@ -388,6 +388,10 @@ fn codex_role_text(entry: &CodexEntry) -> Option<(String, String)> {
         CodexEntry::Other { entry_type, .. } if !entry_type.is_empty() => {
             Some((format!("EVENT:{entry_type}"), String::new()))
         }
+        // Inter-agent messages used to parse as `Other` of type
+        // `response_item`; keep that marker so parent prompts stay the same.
+        // A subagent's task and result come from its own rollout instead.
+        CodexEntry::AgentMessage { .. } => Some(("EVENT:response_item".to_string(), String::new())),
         _ => None,
     }
 }
@@ -595,6 +599,7 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: "2026-03-11T10:00:30Z".parse().unwrap(),
                 text: "src/ 디렉토리를 확인했습니다".to_string(),
+                output_text: String::new(),
             },
         ];
         let prompt = build_codex_prompt(&entries, "test-session").unwrap();
@@ -615,6 +620,8 @@ mod tests {
                 subagent_source: None,
                 agent_role: None,
                 agent_nickname: None,
+                parent_thread_id: None,
+                agent_path: None,
                 text: "s1\n/tmp\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
@@ -624,6 +631,7 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: "2026-03-11T10:00:10Z".parse().unwrap(),
                 text: "답변".to_string(),
+                output_text: String::new(),
             },
             CodexEntry::FunctionCall {
                 timestamp: "2026-03-11T10:00:20Z".parse().unwrap(),
@@ -673,6 +681,7 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: "2026-03-11T10:00:10Z".parse().unwrap(),
                 text: "완료".to_string(),
+                output_text: String::new(),
             },
         ];
         let prompt = build_codex_prompt(&entries, "s1").unwrap();
@@ -798,6 +807,8 @@ mod tests {
                 subagent_source: None,
                 agent_role: None,
                 agent_nickname: None,
+                parent_thread_id: None,
+                agent_path: None,
                 text: "s1".to_string(),
             },
             CodexEntry::UserMessage {
@@ -807,6 +818,7 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: "2026-03-11T10:10:00Z".parse().unwrap(),
                 text: "a".to_string(),
+                output_text: String::new(),
             },
         ]
     }
@@ -835,6 +847,23 @@ mod tests {
             roles,
             vec!["META", "USER", "SUBAGENT", "SUBAGENT_RESULT", "ASSISTANT"]
         );
+    }
+
+    #[test]
+    fn test_build_codex_prompt_keeps_agent_message_as_event_marker() {
+        let mut entries = codex_sample_entries();
+        entries.push(CodexEntry::AgentMessage {
+            timestamp: "2026-03-11T10:20:00Z".parse().unwrap(),
+            recipient: "/root".to_string(),
+            text: "AGENT_MESSAGE_BODY".to_string(),
+        });
+        let prompt = build_codex_prompt(&entries, "s1").unwrap();
+        // Same marker the parser produced before it read agent messages.
+        assert!(
+            prompt.ends_with("[ASSISTANT] a\n[EVENT:response_item]\n"),
+            "{prompt}"
+        );
+        assert!(!prompt.contains("AGENT_MESSAGE_BODY"));
     }
 
     #[test]
