@@ -59,11 +59,11 @@
 ### 확인 지점 2: 2단계 끝
 
 - [x] 이 컴퓨터에서 `cargo run -- today --dry-run`과 `-v`로 Claude, Codex 세션 목록이 나오고 LLM을 부르지 않음
-- [ ] 사용자와 함께 검토, 2단계 PR
+- [x] 사용자와 함께 검토, 2단계 PR
 
 ### 3단계: Antigravity 어댑터
 
-- [ ] 작업 6: Antigravity 기록 읽기 (S)
+- [x] 작업 6: Antigravity 기록 읽기 (S)
 - [ ] 작업 7: Antigravity 어댑터와 설정 (M)
 - [ ] 작업 8: 문서와 실제 로그 확인 (S)
 - [ ] 작업 9: 릴리스 노트에 `Release Highlights` 넣기 (S)

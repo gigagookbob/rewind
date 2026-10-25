@@ -149,7 +149,7 @@ cargo test --locked
 ### 확인 지점 2: 2단계 끝
 
 - [x] 명세 2단계 완료 조건 1~3을 하나씩 확인
-- [ ] 사용자와 함께 결과를 보고 2단계 PR 여부 결정
+- [x] 사용자와 함께 결과를 보고 2단계 PR 여부 결정
 
 ## 3단계: Antigravity 어댑터
 
@@ -158,13 +158,13 @@ cargo test --locked
 **설명:** `parser/antigravity.rs`에 `transcript_full.jsonl` 한 줄을 받는 구조체(`step_index`, `type`, `created_at`, `content`, `thinking`, `tool_calls`)와 파일 읽기 함수를 만듭니다. 모든 필드는 `#[serde(default)]`로 받고, 깨진 줄은 경고 없이 건너뜁니다. `content`에서 `<USER_REQUEST>` 태그 안 글을 꺼내는 함수와, agy `history.jsonl`에서 `conversationId` 목록을 읽는 함수도 만듭니다.
 
 **수용 기준:**
-- [ ] `<USER_REQUEST>` 안 글만 꺼내고, 태그가 없으면 `content` 전체를 돌려줍니다. `<ADDITIONAL_METADATA>` 안 표식 문자열은 결과에 없습니다.
-- [ ] 깨진 줄과 덜 써진 마지막 줄이 있어도 나머지 줄은 읽히고, 모르는 필드와 처음 보는 `type`이 있어도 읽기가 멈추지 않습니다.
-- [ ] `history.jsonl`이 있으면 대화 ID 목록을, 없거나 읽을 수 없으면 `None`을 돌려줍니다. `display` 글은 돌려주지 않습니다.
+- [x] `<USER_REQUEST>` 안 글만 꺼내고, 태그가 없으면 `content` 전체를 돌려줍니다. `<ADDITIONAL_METADATA>` 안 표식 문자열은 결과에 없습니다.
+- [x] 깨진 줄과 덜 써진 마지막 줄이 있어도 나머지 줄은 읽히고, 모르는 필드와 처음 보는 `type`이 있어도 읽기가 멈추지 않습니다.
+- [x] `history.jsonl`이 있으면 대화 ID 목록을, 없거나 읽을 수 없으면 `None`을 돌려줍니다. `display` 글은 돌려주지 않습니다.
 
 **확인:**
-- [ ] `cargo test --locked parser::antigravity`
-- [ ] 공통 세 명령
+- [x] `cargo test --locked parser::antigravity`
+- [x] 공통 세 명령
 
 **의존:** 없음(1단계와 함께 진행할 수 있습니다)
 
