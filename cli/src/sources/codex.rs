@@ -323,9 +323,7 @@ fn subagent_task_and_result(entries: &[CodexEntry], agent_path: Option<&str>) ->
         .iter()
         .rev()
         .find_map(|entry| match entry {
-            CodexEntry::AssistantMessage { output_text, .. } if !output_text.trim().is_empty() => {
-                Some(output_text.clone())
-            }
+            CodexEntry::AssistantMessage { text, .. } if !text.is_empty() => Some(text.clone()),
             _ => None,
         })
         .unwrap_or_default();
@@ -590,8 +588,8 @@ mod tests {
             collection.sessions[0].task.prompt_text,
             "[Session: codex-fixed]\n\
              [META] /project\ncodex-fixed\nopenai\ncli\n\
-             [USER] hello\nhello\nuser_message\n\
-             [ASSISTANT] done\ndone\noutput_text\nassistant\nmessage\n"
+             [USER] hello\n\
+             [ASSISTANT] done\n"
         );
         assert_eq!(
             collection.fingerprint,
