@@ -10,7 +10,7 @@ use crate::config;
 
 pub(crate) use background::{run_worker, send_notification, spawn_worker, worker_log_path};
 pub(crate) use summary::{run_slack, run_summary};
-pub(crate) use today::run_today;
+pub(crate) use today::{run_today, run_today_dry_run};
 
 /// Parses `--date` flag into `NaiveDate`. Returns today if `None`.
 pub(crate) fn parse_date_flag(date: &Option<String>) -> Result<chrono::NaiveDate, String> {

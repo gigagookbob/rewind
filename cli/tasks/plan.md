@@ -50,15 +50,15 @@
 
 - [x] 전체 테스트, Clippy, `cargo fmt --check` 통과
 - [x] `commands/`와 `doctor.rs`의 테스트가 아닌 코드에 `parser::claude`, `parser::codex` 참조가 0줄
-- [ ] 사용자와 함께 1단계 결과 검토, 1단계 PR
+- [x] 사용자와 함께 1단계 결과 검토, 1단계 PR
 
 ### 2단계: 확인 옵션
 
-- [ ] 작업 5: `rwd today --dry-run` 넣기 (M, 5개 파일)
+- [x] 작업 5: `rwd today --dry-run` 넣기 (M, 5개 파일)
 
 ### 확인 지점 2: 2단계 끝
 
-- [ ] 이 컴퓨터에서 `cargo run -- today --dry-run`과 `-v`로 Claude, Codex 세션 목록이 나오고 LLM을 부르지 않음
+- [x] 이 컴퓨터에서 `cargo run -- today --dry-run`과 `-v`로 Claude, Codex 세션 목록이 나오고 LLM을 부르지 않음
 - [ ] 사용자와 함께 검토, 2단계 PR
 
 ### 3단계: Antigravity 어댑터

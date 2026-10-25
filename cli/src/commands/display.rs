@@ -168,6 +168,79 @@ pub(super) fn print_info_box(date: chrono::NaiveDate, sources: &[CollectedSource
     println!("  └{line}┘");
 }
 
+/// Shows the first root and how many more were found, e.g. "/a (+2 more)".
+fn format_roots_short(roots: &[std::path::PathBuf]) -> String {
+    match roots {
+        [] => String::new(),
+        [only] => only.display().to_string(),
+        [first, rest @ ..] => format!("{} (+{} more)", first.display(), rest.len()),
+    }
+}
+
+/// Builds the `--dry-run` report shown after the info box: per-source
+/// session rows, excluded counts, and a closing note. Only ids, times, and
+/// counts are printed, never conversation text.
+fn dry_run_lines(sources: &[CollectedSource]) -> Vec<String> {
+    use crate::messages::dry_run;
+
+    let mut lines = Vec::new();
+    for source in sources {
+        let collection = &source.collection;
+        if collection.roots.is_empty() {
+            lines.push(dry_run::no_roots(source.display_name));
+            lines.push(String::new());
+            continue;
+        }
+        lines.push(dry_run::source_heading(
+            source.display_name,
+            &format_roots_short(&collection.roots),
+        ));
+
+        let local = |ts: chrono::DateTime<chrono::Utc>| ts.with_timezone(&chrono::Local);
+        for session in &collection.sessions {
+            let task = &session.task;
+            let count_role = |role: &str| task.messages.iter().filter(|(r, _)| r == role).count();
+            let short_id: String = task.session_id.chars().take(8).collect();
+            lines.push(dry_run::session_row(
+                &short_id,
+                &format_time_range(
+                    session.first_activity.map(local),
+                    session.last_activity.map(local),
+                ),
+                count_role("USER"),
+                count_role("ASSISTANT"),
+                &format_number(task.estimated_tokens),
+            ));
+        }
+
+        let excluded = collection
+            .excluded
+            .iter()
+            .map(|(reason, count)| dry_run::excluded_item(reason, *count))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(dry_run::source_summary(
+            collection.sessions.len(),
+            &excluded,
+        ));
+        lines.push(String::new());
+    }
+
+    let total = sources.iter().map(|s| s.collection.sessions.len()).sum();
+    lines.push(dry_run::total(total));
+    lines.push(dry_run::LLM_NOT_CALLED.to_string());
+    lines
+}
+
+/// Prints the info box followed by the `--dry-run` session report.
+pub(super) fn print_dry_run(date: chrono::NaiveDate, sources: &[CollectedSource]) {
+    print_info_box(date, sources);
+    println!();
+    for line in dry_run_lines(sources) {
+        println!("{line}");
+    }
+}
+
 /// Returns the terminal width by querying `stty size` via /dev/tty.
 fn terminal_width() -> usize {
     if let Ok(tty) = std::fs::File::open("/dev/tty")
@@ -336,6 +409,71 @@ mod tests {
             }]
         );
         assert!(rows.contains(&InfoRow::Text(crate::messages::display::session_count(1))));
+    }
+
+    #[test]
+    fn test_dry_run_lines_hide_session_text_and_show_counts() {
+        const MARKER: &str = "DRY_RUN_SECRET_MARKER";
+        let mut source = source(
+            "Claude Code",
+            vec!["/claude-a".into(), "/claude-b".into()],
+            vec![CollectedSession {
+                task: SessionTask {
+                    source: "claude",
+                    session_id: "c0d5ead8-1234-5678".to_string(),
+                    prompt_text: format!("[USER] {MARKER}\n"),
+                    messages: vec![
+                        ("USER".to_string(), MARKER.to_string()),
+                        ("ASSISTANT".to_string(), MARKER.to_string()),
+                        ("ASSISTANT".to_string(), "ok".to_string()),
+                        ("SNAPSHOT".to_string(), "m1".to_string()),
+                    ],
+                    estimated_tokens: 41_200,
+                },
+                first_activity: None,
+                last_activity: None,
+                token_usage: None,
+            }],
+        );
+        source.collection.excluded = vec![("automated", 2)];
+
+        let lines = dry_run_lines(&[source]);
+        let text = lines.join("\n");
+
+        assert!(!text.contains(MARKER), "session text leaked: {text}");
+        assert_eq!(
+            lines,
+            vec![
+                crate::messages::dry_run::source_heading("Claude Code", "/claude-a (+1 more)"),
+                crate::messages::dry_run::session_row("c0d5ead8", "? ~ ?", 1, 2, "41,200"),
+                crate::messages::dry_run::source_summary(1, "2 automated"),
+                String::new(),
+                crate::messages::dry_run::total(1),
+                crate::messages::dry_run::LLM_NOT_CALLED.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_dry_run_lines_mark_sources_without_roots_or_sessions() {
+        let mut codex = source("Codex", vec!["/codex".into()], Vec::new());
+        codex.collection.excluded = vec![("subagent", 0)];
+        let sources = vec![source("Claude Code", Vec::new(), Vec::new()), codex];
+
+        let lines = dry_run_lines(&sources);
+
+        assert_eq!(
+            lines,
+            vec![
+                crate::messages::dry_run::no_roots("Claude Code"),
+                String::new(),
+                crate::messages::dry_run::source_heading("Codex", "/codex"),
+                crate::messages::dry_run::source_summary(0, "0 subagent"),
+                String::new(),
+                crate::messages::dry_run::total(0),
+                crate::messages::dry_run::LLM_NOT_CALLED.to_string(),
+            ]
+        );
     }
 
     #[test]
