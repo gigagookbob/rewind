@@ -594,6 +594,25 @@ pub mod verbose {
         format!("[discover] {source} excluded: {count} {reason} session(s)")
     }
 
+    pub fn antigravity_scan(found: usize, unmodified: usize, read: usize) -> String {
+        format!(
+            "[discover] Antigravity: {found} transcript file(s), {unmodified} not modified since the target date, {read} read"
+        )
+    }
+
+    pub const ANTIGRAVITY_DISABLED: &str =
+        "[discover] Antigravity: disabled by `enabled = false` under [input.antigravity]";
+
+    pub fn antigravity_history_missing(path: &dyn std::fmt::Display) -> String {
+        format!(
+            "[discover] Antigravity: could not read {path}, so agy -p runs cannot be told apart; keeping every agy conversation"
+        )
+    }
+
+    pub fn antigravity_unreadable(path: &dyn std::fmt::Display, error: &str) -> String {
+        format!("[discover] Antigravity: skipped {path}: {error}")
+    }
+
     pub fn claude_session_mix(
         interactive: usize,
         automated: usize,

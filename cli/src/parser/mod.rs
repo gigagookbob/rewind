@@ -3,8 +3,6 @@
 use chrono::{DateTime, Datelike, Local, NaiveDate, TimeZone, Utc};
 
 // Antigravity submodule: transcript_full.jsonl and agy history.jsonl reading.
-// TODO(task 7): drop this allow once the Antigravity adapter uses the parser.
-#[allow(dead_code)]
 pub mod antigravity;
 pub mod claude;
 pub mod roots;

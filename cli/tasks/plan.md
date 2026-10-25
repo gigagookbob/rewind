@@ -64,7 +64,7 @@
 ### 3단계: Antigravity 어댑터
 
 - [x] 작업 6: Antigravity 기록 읽기 (S)
-- [ ] 작업 7: Antigravity 어댑터와 설정 (M)
+- [x] 작업 7: Antigravity 어댑터와 설정 (M)
 - [ ] 작업 8: 문서와 실제 로그 확인 (S)
 - [ ] 작업 9: 릴리스 노트에 `Release Highlights` 넣기 (S)
 

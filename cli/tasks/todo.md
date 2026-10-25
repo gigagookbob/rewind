@@ -179,13 +179,13 @@ cargo test --locked
 **설명:** `sources/antigravity.rs`에 명세의 Antigravity 어댑터를 만듭니다. 설정의 `roots`, `~/.gemini/antigravity-cli/brain`, `~/.gemini/antigravity/brain`, `~/.gemini/antigravity-ide/brain`, WSL의 Windows 홈 아래 같은 폴더를 찾고, 각 폴더의 `<대화 ID>/.system_generated/logs/transcript_full.jsonl`만 읽습니다. 수정 시각이 대상 날짜 시작보다 이른 파일은 열지 않고, `created_at`으로 날짜를 거르고, agy 폴더의 대화 중 `history.jsonl`에 없고 사용자 입력이 1개 이하인 대화를 `print-mode`로 뺍니다. 프롬프트는 `USER`, `ASSISTANT`(생각과 답변), `TOOL`(도구 이름) 줄로 만들고 `compact_log_like`를 거칩니다. `config.rs`에 `AntigravityInputConfig`(`enabled` 기본 `true`, `roots`, `include_print_mode` 기본 `false`)를 넣고 어댑터를 등록합니다.
 
 **수용 기준:**
-- [ ] 명세의 3단계 테스트 목록(태그 처리, 도구 인자와 다른 단계 종류 제외, `transcript.jsonl`과 `chunks/` 무시, 날짜 경계, 수정 시각, `-p` 규칙 네 가지 경우, 앱 폴더 예외, 깨진 줄, 열 수 없는 파일)이 모두 통과합니다.
-- [ ] 같은 대화 ID가 두 폴더에 있으면 `step_index` 기준으로 한 세션이 됩니다.
-- [ ] `[input.antigravity]`가 없으면 켜진 것으로, `enabled = false`면 아무것도 수집하지 않는 것으로 동작합니다.
+- [x] 명세의 3단계 테스트 목록(태그 처리, 도구 인자와 다른 단계 종류 제외, `transcript.jsonl`과 `chunks/` 무시, 날짜 경계, 수정 시각, `-p` 규칙 네 가지 경우, 앱 폴더 예외, 깨진 줄, 열 수 없는 파일)이 모두 통과합니다.
+- [x] 같은 대화 ID가 두 폴더에 있으면 `step_index` 기준으로 한 세션이 됩니다.
+- [x] `[input.antigravity]`가 없으면 켜진 것으로, `enabled = false`면 아무것도 수집하지 않는 것으로 동작합니다.
 
 **확인:**
-- [ ] `cargo test --locked sources::antigravity`, `cargo test --locked config`
-- [ ] 공통 세 명령
+- [x] `cargo test --locked sources::antigravity`, `cargo test --locked config`
+- [x] 공통 세 명령
 
 **의존:** 작업 4, 작업 6
 
