@@ -225,12 +225,14 @@ cargo test --locked
 **설명:** `.github/scripts/generate_release_notes.cjs`가 릴리스에 들어가는 PR 본문의 `## Release Highlights` 절에서 `- `로 시작하는 줄을 다음 제목까지 모아, `Highlights`의 정해진 세 줄 앞에 PR 순서대로 넣게 합니다. `skip-release-notes` PR의 줄은 넣지 않습니다. `docs/RELEASES.md`에 이 절을 쓰는 방법을 적습니다.
 
 **수용 기준:**
-- [ ] `node --test`로 도는 테스트에서, 절이 있는 PR의 줄이 `Highlights`에 들어가고, 절이 없는 PR만 있으면 출력이 지금과 같고, `skip-release-notes` PR의 줄은 들어가지 않습니다.
-- [ ] 스크립트 테스트는 가짜 `github` 객체와 PR 데이터만 쓰고 네트워크를 쓰지 않습니다.
-- [ ] `RELEASES.md`에 절 이름, 줄 형식, 예시가 있습니다.
+- [x] `node --test`로 도는 테스트에서, 절이 있는 PR의 줄이 `Highlights`에 들어가고, 절이 없는 PR만 있으면 출력이 지금과 같고, `skip-release-notes` PR의 줄은 들어가지 않습니다.
+- [x] 스크립트 테스트는 가짜 `github` 객체와 PR 데이터만 쓰고 네트워크를 쓰지 않습니다.
+- [x] `RELEASES.md`에 절 이름, 줄 형식, 예시가 있습니다.
 
 **확인:**
-- [ ] 저장소 맨 위 폴더에서 `node --test .github/scripts/`
+- [x] 저장소 맨 위 폴더에서 `node --test .github/scripts/*.test.cjs`
+
+**명령 변경(2026-10-25):** 처음 적은 `node --test .github/scripts/`는 Node 22 이상에서 폴더 안을 찾지 않고 폴더 자체를 파일로 열려다 실패합니다(이 컴퓨터의 Node v24.16.0에서 `Cannot find module`). 그래서 셸이 테스트 파일 이름을 펼쳐 넘기는 `node --test .github/scripts/*.test.cjs`로 바꾸고, 명세와 계획의 같은 명령도 함께 고쳤습니다.
 
 **의존:** 없음(3단계 PR보다 먼저 `main`에 들어가야 합니다)
 

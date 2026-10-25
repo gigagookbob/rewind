@@ -66,12 +66,12 @@
 - [x] 작업 6: Antigravity 기록 읽기 (S)
 - [x] 작업 7: Antigravity 어댑터와 설정 (M)
 - [x] 작업 8: 문서와 실제 로그 확인 (S)
-- [ ] 작업 9: 릴리스 노트에 `Release Highlights` 넣기 (S)
+- [x] 작업 9: 릴리스 노트에 `Release Highlights` 넣기 (S)
 
 ### 확인 지점 3: 3단계 끝
 
 - [x] 명세의 실제 로그 확인 표 값이 `--dry-run`으로 나옴
-- [ ] `node --test .github/scripts/` 통과
+- [x] `node --test .github/scripts/*.test.cjs` 통과
 - [ ] 3단계 PR에 `enhancement` 라벨과 `## Release Highlights` 절
 - [ ] 사용자와 함께 검토
 
@@ -109,4 +109,4 @@
 
 ## 열린 질문
 
-- 릴리스 노트 스크립트 테스트(`node --test .github/scripts/`)를 CI에 넣을지 정해야 합니다. CI 설정을 바꾸는 일이라 따로 승인이 필요합니다. 이 계획은 넣지 않고 직접 돌리는 쪽을 가정합니다.
+- 릴리스 노트 스크립트 테스트(`node --test .github/scripts/*.test.cjs`)를 CI에 넣을지 정해야 합니다. CI 설정을 바꾸는 일이라 따로 승인이 필요합니다. 이 계획은 넣지 않고 직접 돌리는 쪽을 가정합니다.
