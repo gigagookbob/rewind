@@ -43,14 +43,14 @@ cargo test --locked
 **설명:** `commands/collection.rs`의 `collect_codex_sessions` 흐름(UTC 날짜 폴더 찾기, 세션 ID로 합치기, 서브에이전트 세션 빼기, 정렬)과 `commands/display.rs`의 Codex 활동 시각 계산을 `sources/codex.rs`로 옮기고, `analyzer::build_codex_session_task`로 `SessionTask`를 만듭니다. `registered_adapters`에 등록합니다.
 
 **수용 기준:**
-- [ ] 같은 표본에서 Codex 어댑터 결과(세션 ID, `prompt_text`, `estimated_tokens`)가 옛 함수 결과와 같다는 비교 테스트가 `commands/collection.rs` 테스트 모듈에서 통과합니다.
-- [ ] `commands/collection.rs`의 Codex 수집 테스트 5개와 `commands/display.rs`의 `test_codex_time_range_ignores_previous_day_session_meta`와 같은 내용의 테스트가 `sources/codex.rs`에 있고 통과합니다. 활동 시각 테스트는 `CollectedSession.first_activity`와 `last_activity`를 봅니다.
-- [ ] 서브에이전트 세션은 `excluded`에 `subagent`로 세어지고, 지문은 지금의 `codex_session_count`, `codex_entry_count`와 같은 값입니다.
+- [x] 같은 표본에서 Codex 어댑터 결과(세션 ID, `prompt_text`, `estimated_tokens`)가 옛 함수 결과와 같다는 비교 테스트가 `commands/collection.rs` 테스트 모듈에서 통과합니다.
+- [x] `commands/collection.rs`의 Codex 수집 테스트 5개와 `commands/display.rs`의 `test_codex_time_range_ignores_previous_day_session_meta`와 같은 내용의 테스트가 `sources/codex.rs`에 있고 통과합니다. 활동 시각 테스트는 `CollectedSession.first_activity`와 `last_activity`를 봅니다.
+- [x] 서브에이전트 세션은 `excluded`에 `subagent`로 세어지고, 지문은 지금의 `codex_session_count`, `codex_entry_count`와 같은 값입니다.
 
 **확인:**
-- [ ] `cargo test --locked sources::codex`
-- [ ] `cargo test --locked commands::collection`
-- [ ] 공통 세 명령
+- [x] `cargo test --locked sources::codex`
+- [x] `cargo test --locked commands::collection`
+- [x] 공통 세 명령
 
 **의존:** 작업 1
 

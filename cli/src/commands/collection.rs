@@ -376,6 +376,95 @@ mod tests {
     }
 
     #[test]
+    fn test_codex_adapter_matches_legacy_collection() {
+        use crate::sources::SourceAdapter;
+
+        let date = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).expect("date");
+        let base = unique_temp_dir("rwd_test_codex_adapter_parity");
+        let root_a = base.join("codex-a");
+        let root_b = base.join("codex-b");
+        let day_a = root_a.join("2099/01/01");
+        let day_b = root_b.join("2099/01/01");
+        std::fs::create_dir_all(&day_a).expect("day a");
+        std::fs::create_dir_all(&day_b).expect("day b");
+
+        // Session split across two roots, merged by session id.
+        std::fs::write(
+            day_a.join("rollout-merged-a.jsonl"),
+            [
+                r#"{"timestamp":"2099-01-01T10:00:00Z","type":"session_meta","payload":{"id":"parity-merged","cwd":"/p","model_provider":"openai","source":"cli"}}"#,
+                r#"{"timestamp":"2099-01-01T10:01:00Z","type":"event_msg","payload":{"type":"user_message","message":"Split the adapters."}}"#,
+                r#"{"timestamp":"2099-01-01T10:02:00Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"cmd\":\"ls\"}"}}"#,
+            ]
+            .join("\n"),
+        )
+        .expect("merged a");
+        std::fs::write(
+            day_b.join("rollout-merged-b.jsonl"),
+            [
+                r#"{"timestamp":"2099-01-01T10:00:00Z","type":"session_meta","payload":{"id":"parity-merged","cwd":"/p","model_provider":"openai","source":"cli"}}"#,
+                r#"{"timestamp":"2099-01-01T10:03:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Adapters split."}]}}"#,
+            ]
+            .join("\n"),
+        )
+        .expect("merged b");
+        // Earlier session without an id, keyed by root and file name.
+        std::fs::write(
+            day_a.join("rollout-no-id.jsonl"),
+            r#"{"timestamp":"2099-01-01T08:00:00Z","type":"event_msg","payload":{"type":"user_message","message":"No session meta here."}}"#,
+        )
+        .expect("no id");
+        // Subagent session dropped by both paths.
+        write_codex_rollout(
+            &day_b.join("rollout-subagent.jsonl"),
+            "parity-subagent",
+            "/p",
+            r#","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parity-merged","depth":1}}}"#,
+        );
+
+        let cfg = test_config(
+            Some(vec![
+                root_a.to_string_lossy().to_string(),
+                root_b.to_string_lossy().to_string(),
+            ]),
+            None,
+        );
+        let (legacy_sessions, _) = collect_codex_sessions(date, Some(&cfg));
+        let legacy_tasks: Vec<_> = legacy_sessions
+            .iter()
+            .map(|(summary, entries)| {
+                crate::analyzer::build_codex_session_task(entries, &summary.session_id)
+                    .expect("legacy task")
+            })
+            .collect();
+        let legacy_entry_count: usize = legacy_sessions.iter().map(|(_, e)| e.len()).sum();
+
+        let collection = crate::sources::codex::CodexAdapter::with_roots(vec![root_a, root_b])
+            .collect(&crate::sources::CollectContext {
+                date,
+                config: None,
+                include_automated: false,
+            })
+            .expect("adapter collect");
+        std::fs::remove_dir_all(&base).ok();
+
+        let adapter_tasks: Vec<_> = collection.sessions.iter().map(|s| &s.task).collect();
+        assert_same_tasks(&legacy_tasks, &adapter_tasks);
+        assert_eq!(legacy_tasks.len(), 2);
+        assert_eq!(
+            collection.fingerprint,
+            crate::sources::SourceFingerprint {
+                session_count: legacy_sessions.len(),
+                entry_count: legacy_entry_count,
+            }
+        );
+        assert_eq!(
+            collection.excluded,
+            vec![(crate::sources::codex::EXCLUDED_SUBAGENT, 1)]
+        );
+    }
+
+    #[test]
     fn test_collect_codex_sessions_merges_by_session_id_across_roots() {
         let date = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).expect("date");
         let base = unique_temp_dir("rwd_test_codex_multi_root");

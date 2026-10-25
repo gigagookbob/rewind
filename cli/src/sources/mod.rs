@@ -8,6 +8,7 @@
 #![allow(dead_code)]
 
 pub mod claude;
+pub mod codex;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
@@ -69,5 +70,8 @@ pub struct SourceFingerprint {
 
 /// Returns every adapter in display order: Claude Code, Codex, then newer agents.
 pub fn registered_adapters() -> Vec<Box<dyn SourceAdapter>> {
-    vec![Box::new(claude::ClaudeAdapter::default())]
+    vec![
+        Box::new(claude::ClaudeAdapter::default()),
+        Box::new(codex::CodexAdapter::default()),
+    ]
 }
