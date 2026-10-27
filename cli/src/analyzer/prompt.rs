@@ -599,7 +599,6 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: "2026-03-11T10:00:30Z".parse().unwrap(),
                 text: "src/ 디렉토리를 확인했습니다".to_string(),
-                output_text: String::new(),
             },
         ];
         let prompt = build_codex_prompt(&entries, "test-session").unwrap();
@@ -631,7 +630,6 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: "2026-03-11T10:00:10Z".parse().unwrap(),
                 text: "답변".to_string(),
-                output_text: String::new(),
             },
             CodexEntry::FunctionCall {
                 timestamp: "2026-03-11T10:00:20Z".parse().unwrap(),
@@ -681,7 +679,6 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: "2026-03-11T10:00:10Z".parse().unwrap(),
                 text: "완료".to_string(),
-                output_text: String::new(),
             },
         ];
         let prompt = build_codex_prompt(&entries, "s1").unwrap();
@@ -818,7 +815,6 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: "2026-03-11T10:10:00Z".parse().unwrap(),
                 text: "a".to_string(),
-                output_text: String::new(),
             },
         ]
     }

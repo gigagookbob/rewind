@@ -53,15 +53,15 @@ pub enum CodexEntry {
     /// User input message
     UserMessage {
         timestamp: DateTime<Utc>,
+        /// Typed text only: `event_msg` `message`, or `input_text` blocks
+        /// without app-injected context.
         text: String,
     },
     /// Assistant (AI) text response
     AssistantMessage {
         timestamp: DateTime<Utc>,
-        /// Prompt text: the answer plus every other payload string.
+        /// `output_text` blocks only. Also a subagent's final result.
         text: String,
-        /// Only the `output_text` blocks, used as a subagent's final result.
-        output_text: String,
     },
     /// Message between agents of one multi-agent run (`response_item` of type
     /// `agent_message`). A subagent receives its task this way.
@@ -147,6 +147,29 @@ fn optional_non_empty_string(value: &serde_json::Value) -> Option<String> {
 /// forked subagent rollouts receive their task as the first `agent_message`
 /// whose `recipient` is their own `agent_path` (SPEC.md, stage 4).
 const PAYLOAD_AGENT_MESSAGE: &str = "agent_message";
+
+/// `session_meta` fields sent as the `[META]` line: where the session ran.
+/// Verified on 141 local `session_meta` lines: the rest is Codex's own
+/// `base_instructions` (~21,500 chars each), account and window ids,
+/// versions, and timestamps (SPEC.md, Codex prompt text).
+const SESSION_META_PROMPT_FIELDS: [&str; 6] = [
+    "/cwd",
+    "/git/branch",
+    "/git/repository_url",
+    "/id",
+    "/model_provider",
+    // A subagent's `source` is an object; only the string form is kept.
+    "/source",
+];
+
+fn session_meta_text(payload: &serde_json::Value) -> String {
+    let parts: Vec<String> = SESSION_META_PROMPT_FIELDS
+        .iter()
+        .filter_map(|pointer| payload.pointer(pointer)?.as_str())
+        .map(str::to_string)
+        .collect();
+    join_unique_lines(&parts)
+}
 
 /// Reads one string field of `source.subagent.thread_spawn`.
 fn thread_spawn_field(payload: &serde_json::Value, field: &str) -> Option<String> {
@@ -238,15 +261,19 @@ impl CodexEntry {
                     agent_nickname,
                     parent_thread_id: thread_spawn_field(payload, "parent_thread_id"),
                     agent_path: thread_spawn_field(payload, "agent_path"),
-                    text: payload_text.clone(),
+                    text: session_meta_text(payload),
                 }
             }
+            // Other payload strings (`images` data URLs, local file paths,
+            // `kind`) are not what the user typed (SPEC.md, Codex prompt text).
             "event_msg" if payload["type"].as_str() == Some("user_message") => {
-                let text = payload["message"].as_str().unwrap_or_default().to_string();
-                let text = join_unique_lines(&[text, payload_text.clone()]);
                 CodexEntry::UserMessage {
                     timestamp: ts,
-                    text,
+                    text: payload["message"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
                 }
             }
             "response_item"
@@ -271,12 +298,12 @@ impl CodexEntry {
                 if payload["type"].as_str() == Some("message")
                     && payload["role"].as_str() == Some("assistant") =>
             {
-                let output_text = extract_codex_output_text(payload);
-                let text = join_unique_lines(&[output_text.clone(), payload_text.clone()]);
+                // Verified: besides `output_text`, all 1,867 local answers
+                // carry only ids, `phase`, `status`, and type names
+                // (SPEC.md, Codex prompt text).
                 CodexEntry::AssistantMessage {
                     timestamp: ts,
-                    text,
-                    output_text,
+                    text: extract_codex_output_text(payload).trim().to_string(),
                 }
             }
             "response_item" if payload["type"].as_str() == Some(PAYLOAD_AGENT_MESSAGE) => {
@@ -606,13 +633,12 @@ fn entry_fingerprint(entry: &CodexEntry) -> CodexEntryFingerprint {
             timestamp_millis: timestamp.timestamp_millis(),
             text: text.clone(),
         },
-        // `output_text` is part of `text`, so `text` alone identifies the entry.
-        CodexEntry::AssistantMessage {
-            timestamp, text, ..
-        } => CodexEntryFingerprint::AssistantMessage {
-            timestamp_millis: timestamp.timestamp_millis(),
-            text: text.clone(),
-        },
+        CodexEntry::AssistantMessage { timestamp, text } => {
+            CodexEntryFingerprint::AssistantMessage {
+                timestamp_millis: timestamp.timestamp_millis(),
+                text: text.clone(),
+            }
+        }
         CodexEntry::AgentMessage {
             timestamp,
             recipient,
@@ -744,6 +770,33 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_session_meta_text_keeps_only_session_context() {
+        let json = r#"{"timestamp":"2026-10-25T09:00:00Z","type":"session_meta","payload":{"id":"sess-abc","session_id":"sess-abc","timestamp":"2026-10-25T09:00:00Z","cwd":"/home/user/project","originator":"Codex Desktop","cli_version":"0.164.0","source":"vscode","thread_source":"user","model_provider":"openai","creator_account_id":"acct-marker","creator_user_id":"user-marker","context_window":{"window_id":"window-marker"},"history_mode":"paginated","runtime_workspace_roots":["/home/user/other"],"base_instructions":{"text":"You are Codex. INSTRUCTIONS-MARKER","provenance":{"type":"model","model":"gpt-5.5"}},"git":{"commit_hash":"0123456789abcdef0123456789abcdef01234567","branch":"feat/login","repository_url":"https://github.com/example/project.git"}}}"#;
+        let entry = CodexEntry::from_raw(serde_json::from_str(json).unwrap());
+
+        if let CodexEntry::SessionMeta { text, .. } = entry {
+            assert_eq!(
+                text,
+                "/home/user/project\nfeat/login\nhttps://github.com/example/project.git\nsess-abc\nopenai\nvscode"
+            );
+        } else {
+            panic!("Expected SessionMeta variant");
+        }
+    }
+
+    #[test]
+    fn test_parse_session_meta_text_skips_object_source() {
+        let json = r#"{"timestamp":"2026-10-25T09:00:00Z","type":"session_meta","payload":{"id":"sess-sub","cwd":"/project","model_provider":"openai","source":{"subagent":{"thread_spawn":{"parent_thread_id":"sess-parent","agent_path":"/root/ada"}}}}}"#;
+        let entry = CodexEntry::from_raw(serde_json::from_str(json).unwrap());
+
+        if let CodexEntry::SessionMeta { text, .. } = entry {
+            assert_eq!(text, "/project\nsess-sub\nopenai");
+        } else {
+            panic!("Expected SessionMeta variant");
+        }
+    }
+
+    #[test]
     fn test_parse_session_meta_entry_preserves_subagent_metadata() {
         let json = r#"{"timestamp":"2026-04-22T09:00:00Z","type":"session_meta","payload":{"id":"sess-sub","cwd":"/Users/jinwoohan/.codex/memories","model_provider":"openai","source":{"subagent":"memory_consolidation"},"agent_role":"memory builder","agent_nickname":"Morpheus"}}"#;
         let raw: CodexRawEntry = serde_json::from_str(json).unwrap();
@@ -845,15 +898,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_assistant_message_keeps_clean_output_text() {
-        let json = r#"{"timestamp":"2026-03-16T09:02:00Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"msg_1","content":[{"type":"output_text","text":"Found two"},{"type":"output_text","text":" edge cases"}]}}"#;
+    fn test_parse_assistant_message_keeps_only_output_text() {
+        let json = r#"{"timestamp":"2026-03-16T09:02:00Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"msg_1","phase":"final_answer","status":"completed","internal_chat_message_metadata_passthrough":{"turn_id":"019d0000-0000-7000-8000-000000000001","content_item_kinds":["unknown"]},"content":[{"type":"output_text","text":"Found two"},{"type":"output_text","text":" edge cases"}]}}"#;
         let entry = CodexEntry::from_raw(serde_json::from_str(json).unwrap());
-        if let CodexEntry::AssistantMessage {
-            text, output_text, ..
-        } = entry
-        {
-            assert_eq!(output_text, "Found two edge cases");
-            assert!(text.contains("msg_1"), "prompt text keeps payload strings");
+        if let CodexEntry::AssistantMessage { text, .. } = entry {
+            assert_eq!(text, "Found two edge cases");
         } else {
             panic!("Expected AssistantMessage variant");
         }
@@ -938,13 +987,13 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_user_message_from_event_msg() {
-        let json = r#"{"timestamp":"2026-03-16T09:01:00Z","type":"event_msg","payload":{"type":"user_message","message":"fix the bug"}}"#;
+    fn test_parse_user_message_from_event_msg_keeps_only_message() {
+        let json = r#"{"timestamp":"2026-03-16T09:01:00Z","type":"event_msg","payload":{"type":"user_message","message":"fix the bug","kind":"plain","images":["data:image/png;base64,AAAA"],"local_images":["/tmp/shot.png"],"text_elements":[]}}"#;
         let raw: CodexRawEntry = serde_json::from_str(json).unwrap();
         let entry = CodexEntry::from_raw(raw);
 
         if let CodexEntry::UserMessage { text, .. } = entry {
-            assert!(text.contains("fix the bug"));
+            assert_eq!(text, "fix the bug");
         } else {
             panic!("Expected UserMessage variant");
         }
@@ -1172,7 +1221,6 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: yesterday_ts,
                 text: "old reply".to_string(),
-                output_text: String::new(),
             },
             CodexEntry::UserMessage {
                 timestamp: today_ts,
@@ -1181,7 +1229,6 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: today_ts,
                 text: "new reply".to_string(),
-                output_text: String::new(),
             },
         ];
 
@@ -1254,7 +1301,6 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: today_ts,
                 text: "reply".to_string(),
-                output_text: String::new(),
             },
             CodexEntry::FunctionCall {
                 timestamp: today_ts,
@@ -1296,12 +1342,10 @@ mod tests {
             CodexEntry::AssistantMessage {
                 timestamp: window.end_utc - chrono::Duration::nanoseconds(1),
                 text: "before_end".to_string(),
-                output_text: String::new(),
             },
             CodexEntry::AssistantMessage {
                 timestamp: window.end_utc,
                 text: "at_end".to_string(),
-                output_text: String::new(),
             },
         ];
 
