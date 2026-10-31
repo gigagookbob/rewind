@@ -116,3 +116,21 @@ After publishing, it is still worth editing the release body by hand when:
 - a release introduces a new command or config key,
 - a release fixes a subtle data-loss or correctness bug,
 - or the automatic bullets miss the real story of the release.
+
+## 0.14.0 릴리스 전 보안 점검 (2026-10-31)
+
+`cargo-audit`가 설치돼 있지 않아 OSV API로 `Cargo.lock`의 crates.io 패키지 276개를 확인했습니다. 버전이 공지와 일치한 패키지는 12개였습니다. 이 결과는 실제 호출 여부를 검사한 결과와 구분합니다.
+
+HTTPS 통신에 포함되는 아래 패키지는 기존 의존성 범위 안에서 갱신했습니다.
+
+- `rustls`: 0.23.37에서 [0.23.46](https://github.com/rustls/rustls/releases/tag/v/0.23.46)으로 갱신했습니다. TLS 처리와 세션 비밀값 노출 관련 수정이 포함됩니다.
+- `rustls-webpki`: 0.103.9에서 [0.103.16](https://github.com/rustls/webpki/releases/tag/v/0.103.16)으로 갱신했습니다. 신뢰가 철회된 중간 인증서의 검증 경로를 거부합니다.
+- `webpki-roots`: 1.0.6에서 [1.0.11](https://github.com/rustls/webpki-roots/releases/tag/v/1.0.11)로 갱신했습니다. 신뢰가 철회된 루트 인증서를 제거합니다.
+
+갱신 후 다시 검사했을 때 공지와 일치하는 패키지는 9개로 줄었습니다. 다음 공지는 이번 릴리스에서 별도로 처리하지 않았습니다. 재검토 기준일은 2026-11-07입니다.
+
+- `quick-xml`, `quinn-proto`, `rand` 0.9.2: `cargo tree --locked --target <배포 대상> -i <패키지>`로 확인했을 때 macOS ARM64와 Linux x86_64의 활성 의존성에 포함되지 않았습니다. 잠금 파일에는 선택 기능의 의존성으로 남아 있습니다.
+- `rpassword` 7.4.0: 입력 중단 시 일부 비밀번호가 보일 수 있다는 낮은 심각도 공지가 있습니다([GHSA-2p6r-x3vv-xqm2](https://github.com/advisories/GHSA-2p6r-x3vv-xqm2)). 설정 입력 경로의 후속 수정으로 남깁니다.
+- `tokio` 1.50.0: `AsyncFd` 생성자의 I/O 안전성 공지가 있습니다([RUSTSEC-2026-0386](https://rustsec.org/advisories/RUSTSEC-2026-0386.html)). rwd 소스에서 해당 생성자를 직접 사용하지 않지만, 간접 호출 경로의 안전성은 확인하지 못했습니다.
+- `event-listener` 5.4.1: Linux 알림 의존성에 포함됩니다. `StackSlot`에서 스레드로 이동할 수 없는 태그가 다른 스레드로 전달될 수 있다는 공지입니다([RUSTSEC-2026-0221](https://rustsec.org/advisories/RUSTSEC-2026-0221.html)). rwd가 태그를 직접 만들지는 않지만, 간접 호출 경로의 안전성은 확인하지 못했습니다.
+- `zbus_names`, `zvariant`, `zvariant_derive`: Linux 알림 의존성에 대한 유지보수 중단 공지입니다. 이번 검사에서 이 세 공지에 연결된 구체적인 취약점은 확인하지 못했습니다.
