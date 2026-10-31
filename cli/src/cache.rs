@@ -159,6 +159,33 @@ fn save_update_check_to(
 mod tests {
     use super::*;
 
+    #[test]
+    fn test_legacy_insights_stay_readable_without_claiming_verified_evidence() {
+        let json = r#"{"date":"2026-10-31","sources":[["Claude Code",{"sessions":[{
+            "session_id":"old-session","work_summary":"old summary",
+            "decisions":[{"what":"old decision","why":"old reason"}],
+            "curiosities":[],"corrections":[{"model_said":"proposal","user_corrected":"rejection"}],
+            "til":[{"title":"old learning","detail":"old detail"}]
+        }]}]]}"#;
+        let cache: TodayCache = serde_json::from_str(json).unwrap();
+        let session = &cache.sources[0].1.sessions[0];
+        assert!(session.decisions[0].evidence.is_empty());
+        assert!(session.til[0].evidence.is_empty());
+        assert_eq!(
+            session.corrections[0].kind,
+            crate::analyzer::insight::CorrectionKind::Unknown
+        );
+        let md = crate::output::render_combined_markdown(
+            &[("Claude Code", &cache.sources[0].1)],
+            NaiveDate::from_ymd_opt(2026, 10, 31).unwrap(),
+        );
+        assert!(md.contains("old decision"));
+        assert!(md.contains("old learning"));
+        assert!(md.contains("근거 미확인"));
+        assert!(md.contains("분류 미확인"));
+        assert!(!md.contains("Factual correction"));
+    }
+
     fn empty_today_cache(date: &str, timezone_window_key: Option<String>) -> TodayCache {
         TodayCache {
             date: date.to_string(),

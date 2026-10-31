@@ -4,7 +4,7 @@
 
 use chrono::NaiveDate;
 
-use crate::analyzer::insight::{AnalysisResult, SessionInsight, TilItem};
+use crate::analyzer::insight::{AnalysisResult, Evidence, SessionInsight, TilItem};
 
 /// Combines analysis results from multiple sources into a single Markdown document.
 /// Each source is separated by a ## heading.
@@ -13,6 +13,10 @@ use crate::analyzer::insight::{AnalysisResult, SessionInsight, TilItem};
 pub fn render_combined_markdown(sources: &[(&str, &AnalysisResult)], date: NaiveDate) -> String {
     let mut md = String::new();
     md.push_str(&format!("# {date} Dev Session Review\n\n"));
+    md.push_str(&format!(
+        "{}\n\n",
+        crate::messages::display::ATTRIBUTION_NOTE
+    ));
 
     let mut all_til_items: Vec<(&str, &TilItem)> = Vec::new();
 
@@ -36,6 +40,10 @@ pub fn render_markdown(analysis: &AnalysisResult, date: NaiveDate) -> String {
     let mut md = String::new();
 
     md.push_str(&format!("# {date} Dev Session Review\n\n"));
+    md.push_str(&format!(
+        "{}\n\n",
+        crate::messages::display::ATTRIBUTION_NOTE
+    ));
 
     let mut til_items: Vec<(&str, &TilItem)> = Vec::new();
 
@@ -68,6 +76,7 @@ fn render_session(md: &mut String, session: &SessionInsight) {
         ));
         for d in &session.decisions {
             md.push_str(&format!("- **{}**: {}\n", d.what, d.why));
+            render_evidence(md, &d.evidence);
         }
         md.push('\n');
     }
@@ -89,13 +98,15 @@ fn render_session(md: &mut String, session: &SessionInsight) {
             crate::messages::markdown::CORRECTIONS_HEADER
         ));
         for c in &session.corrections {
+            md.push_str(&format!("- {}\n", c.kind.label()));
             md.push_str(&format!(
-                "- {}: {}\n  {}: {}\n",
+                "  {}: {}\n  {}: {}\n",
                 crate::messages::markdown::CORRECTION_MODEL,
                 c.model_said,
                 crate::messages::markdown::CORRECTION_FIX,
                 c.user_corrected
             ));
+            render_evidence(md, &c.evidence);
         }
         md.push('\n');
     }
@@ -114,9 +125,21 @@ fn render_til_section(md: &mut String, til_items: &[(&str, &TilItem)]) {
     for (session_id, til) in til_items {
         md.push_str(&format!("### {}\n", til.title));
         md.push_str(&format!("{}\n", til.detail));
+        render_evidence(md, &til.evidence);
         // Session ID as HTML comment -- invisible in rendered Markdown but traceable.
         md.push_str(&format!("<!-- session: {} -->\n\n", session_id));
     }
+}
+
+fn render_evidence(md: &mut String, evidence: &[Evidence]) {
+    md.push('\n');
+    for line in crate::output::display_evidence(evidence).lines() {
+        md.push_str(&format!(
+            "  > {}  \n",
+            super::escape_markdown(line.trim_start())
+        ));
+    }
+    md.push('\n');
 }
 
 #[cfg(test)]
@@ -131,12 +154,14 @@ mod tests {
                 session_id: "test-session-1".to_string(),
                 work_summary: "파서 모듈 구현".to_string(),
                 decisions: vec![Decision {
+                    evidence: vec![],
                     what: "serde 사용".to_string(),
                     why: "자동 역직렬화가 편리".to_string(),
                 }],
                 curiosities: vec!["serde의 tag 속성이란?".to_string()],
                 corrections: vec![],
                 til: vec![TilItem {
+                    evidence: vec![],
                     title: "serde tag는 중첩 JSON에서 안 먹힌다".to_string(),
                     detail: "Codex JSONL처럼 type이 두 곳에 있으면 2단계 파싱 필요".to_string(),
                 }],

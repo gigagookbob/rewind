@@ -293,6 +293,35 @@ fn build_prompt(session_id: &str, messages: &[(String, String)]) -> String {
     output
 }
 
+fn evidence_sources(steps: &[&TranscriptStep]) -> Vec<analyzer::evidence::SourceMessage> {
+    let mut next_index = 1;
+    steps
+        .iter()
+        .filter_map(|step| {
+            let messages = conversation_messages(&[step]);
+            let message_index = next_index;
+            next_index += messages.len();
+            let location = step.source_location.as_ref()?;
+            let text = match step.step_type.as_str() {
+                STEP_USER_INPUT => antigravity::extract_user_request(step.content.as_deref()?),
+                STEP_PLANNER_RESPONSE => step.content.as_deref()?.trim(),
+                _ => return None,
+            };
+            if text.is_empty() {
+                return None;
+            }
+            let (role, rendered_text) = messages.first()?;
+            Some(analyzer::evidence::SourceMessage {
+                message_index,
+                role: role.clone(),
+                text: text.into(),
+                rendered_text: rendered_text.clone(),
+                location: location.clone(),
+            })
+        })
+        .collect()
+}
+
 impl SourceAdapter for AntigravityAdapter {
     fn id(&self) -> &'static str {
         Self::ID
@@ -360,9 +389,11 @@ impl SourceAdapter for AntigravityAdapter {
             let prompt_text = build_prompt(id, &messages);
             sessions.push(CollectedSession {
                 task: analyzer::SessionTask {
+                    evidence_sources: evidence_sources(&day_steps),
                     source: Self::ID,
                     session_id: id.clone(),
-                    estimated_tokens: analyzer::prompt::estimate_prompt_tokens(&prompt_text),
+                    estimated_tokens: analyzer::prompt::estimate_prompt_tokens(&prompt_text)
+                        + messages.len() as u64 * 8,
                     prompt_text,
                     messages,
                 },
@@ -615,7 +646,14 @@ mod tests {
         assert_eq!(
             task.estimated_tokens,
             analyzer::prompt::estimate_prompt_tokens(&task.prompt_text)
+                + task.messages.len() as u64 * 8
         );
+        let (_, catalog) =
+            analyzer::evidence::annotate_messages(&task.messages, &task.evidence_sources);
+        assert_eq!(catalog.len(), 3);
+        assert_eq!(catalog["m2"].text, "The timezone key changed.");
+        assert_eq!(catalog["m2"].location.line, 2);
+        assert!(!catalog["m2"].text.contains("Check the key."));
         assert_eq!(
             collection.fingerprint,
             SourceFingerprint {

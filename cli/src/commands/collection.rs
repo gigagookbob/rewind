@@ -86,6 +86,7 @@ mod tests {
                 roots: vec![std::path::PathBuf::from("/fake")],
                 sessions: vec![CollectedSession {
                     task: SessionTask {
+                        evidence_sources: vec![],
                         source: "fake",
                         session_id: format!("{}-session", self.id),
                         prompt_text: "[Session]".to_string(),

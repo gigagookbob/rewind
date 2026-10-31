@@ -139,6 +139,21 @@ Update notice env toggles:
 - `RWD_DISABLE_UPDATE_CHECK=1 rwd today` — disable update notice
 - `RWD_FORCE_UPDATE_CHECK=1 cargo run -- today` — force update check even in local dev build
 
+### 회고의 근거와 정정 분류
+
+`rwd today`의 새 분석은 결정과 TIL에 원문 발언, 발언자, 로컬 로그의 `파일 경로:줄 번호`를 표시합니다. 정정에도 같은 근거가 붙습니다. 줄 번호는 빈 줄과 파싱하지 못한 줄까지 센 JSONL의 실제 위치이며, 인용은 그 줄에서 추출한 대화 텍스트의 일부입니다. 대화가 여러 텍스트 블록으로 나뉘면 해당 블록들을 담은 줄을 가리킵니다.
+
+AI는 입력에 붙인 `m1` 같은 발언 ID와 원문 인용만 반환합니다. `rwd`는 인용이 원래 발언과 분석용 텍스트 양쪽에 있는지 검사하고, 파일 위치와 발언자는 로컬에서 연결합니다. ID는 분석 입력 안에서만 쓰며 다음 실행에서도 같은 값이라고 보장하지 않습니다. 위치 연결을 위한 로컬 경로는 AI에게 보내는 메타 정보에 추가하지 않습니다.
+
+- 결정은 사용자 발언 근거가 필요합니다. 대화에 명시된 이유만 쓰고, 이유가 없으면 비워 둡니다.
+- TIL도 사용자가 실제로 이해하거나 적용했다는 발언 근거가 필요합니다. AI가 설명했다는 이유만으로 학습을 확정하지 않습니다.
+- 새 분석에서 근거가 없거나 인용이 틀린 항목은 제외합니다. 내부 추론, 도구 출력, 메타 정보와 붙여 넣은 서브에이전트 요약은 근거로 인정하지 않습니다. 긴 세션의 중간 요약에서 ID나 인용을 잃은 경우에도 해당 항목이 빠질 수 있습니다.
+- 정정은 `factual_error`(사실 오류 정정), `preference_change`(선호 또는 접근 방식 변경), `unknown`(분류 미확인)으로 표시합니다. 복잡도나 취향 때문에 제안을 거절한 경우를 사실 오류로 분류하지 않도록 지시하며, 모호하거나 두 경우가 섞이면 `unknown`으로 남깁니다.
+
+검사는 인용의 원문 일치와 위치를 확인합니다. 인용이 설명을 충분히 뒷받침하는지, 사용자가 실제로 학습했는지, 정정된 기술적 주장이 사실인지는 AI 해석에 남아 있습니다. 터미널과 일일 노트에도 이 한계를 표시합니다.
+
+기존 캐시는 그대로 읽습니다. 새 필드가 없는 결정과 TIL은 근거 미확인으로, 기존 정정은 분류 미확인으로 표시하며 근거를 소급해서 만들지 않습니다. 캐시를 읽을 때 원문 파일을 다시 검사하지는 않습니다. 기존 날짜를 새 형식으로 분석하려면 기존 옵션인 `rwd today --date YYYY-MM-DD --no-cache`를 사용할 수 있습니다. 이 명령은 설정된 외부 AI를 호출합니다.
+
 ### Preview with `--dry-run`
 
 `rwd today --dry-run` collects sessions and prints, per source, the log folder, each session (short id, time range, user and assistant message counts, estimated tokens), and how many sessions were excluded and why. It then exits.

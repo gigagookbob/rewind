@@ -61,10 +61,24 @@ fn write_analysis_schema_file() -> Result<PathBuf, AnalyzerError> {
 }
 
 /// Structured output schema for insight extraction.
-const ANALYSIS_OUTPUT_SCHEMA: &str = r#"{
+const ANALYSIS_OUTPUT_SCHEMA: &str = r##"{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
+  "$defs": {
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["message_id", "quote"],
+        "properties": {
+          "message_id": { "type": "string" },
+          "quote": { "type": "string" }
+        }
+      }
+    }
+  },
   "required": ["sessions"],
   "properties": {
     "sessions": {
@@ -81,10 +95,11 @@ const ANALYSIS_OUTPUT_SCHEMA: &str = r#"{
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["what", "why"],
+              "required": ["what", "why", "evidence"],
               "properties": {
                 "what": { "type": "string" },
-                "why": { "type": "string" }
+                "why": { "type": "string" },
+                "evidence": { "$ref": "#/$defs/evidence" }
               }
             }
           },
@@ -94,10 +109,12 @@ const ANALYSIS_OUTPUT_SCHEMA: &str = r#"{
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["model_said", "user_corrected"],
+              "required": ["model_said", "user_corrected", "kind", "evidence"],
               "properties": {
                 "model_said": { "type": "string" },
-                "user_corrected": { "type": "string" }
+                "user_corrected": { "type": "string" },
+                "kind": { "type": "string", "enum": ["factual_error", "preference_change", "unknown"] },
+                "evidence": { "$ref": "#/$defs/evidence" }
               }
             }
           },
@@ -106,10 +123,11 @@ const ANALYSIS_OUTPUT_SCHEMA: &str = r#"{
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["title", "detail"],
+              "required": ["title", "detail", "evidence"],
               "properties": {
                 "title": { "type": "string" },
-                "detail": { "type": "string" }
+                "detail": { "type": "string" },
+                "evidence": { "$ref": "#/$defs/evidence" }
               }
             }
           }
@@ -117,7 +135,7 @@ const ANALYSIS_OUTPUT_SCHEMA: &str = r#"{
       }
     }
   }
-}"#;
+}"##;
 
 async fn run_codex_exec(
     prompt: &str,
@@ -314,6 +332,35 @@ struct ExecUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_analysis_schema_requires_evidence_and_explicit_correction_kind() {
+        let schema: serde_json::Value = serde_json::from_str(ANALYSIS_OUTPUT_SCHEMA).unwrap();
+        let properties = &schema["properties"]["sessions"]["items"]["properties"];
+        for category in ["decisions", "til", "corrections"] {
+            let item = &properties[category]["items"];
+            assert!(
+                item["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("evidence"))
+            );
+            assert_eq!(item["properties"]["evidence"]["$ref"], "#/$defs/evidence");
+            assert_eq!(item["additionalProperties"], false);
+        }
+        assert_eq!(
+            properties["corrections"]["items"]["properties"]["kind"]["enum"],
+            serde_json::json!(["factual_error", "preference_change", "unknown"])
+        );
+        let evidence = &schema["$defs"]["evidence"]["items"];
+        assert_eq!(
+            evidence["required"],
+            serde_json::json!(["message_id", "quote"])
+        );
+        assert_eq!(evidence["additionalProperties"], false);
+        assert!(evidence["properties"].get("location").is_none());
+        assert!(evidence["properties"].get("role").is_none());
+    }
 
     #[test]
     fn test_parse_jsonl_events_extracts_agent_message_and_usage() {

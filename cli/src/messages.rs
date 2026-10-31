@@ -399,9 +399,10 @@ pub mod status {
 
 /// Labels for `rwd today --verbose` output sections.
 pub mod display {
+    pub const ATTRIBUTION_NOTE: &str = "AI interpretation; only quote attribution checked / AI 해석이며 인용의 원문 일치와 위치만 검사했습니다.";
     pub const DECISIONS_LABEL: &str = "Key Decisions";
     pub const CURIOSITIES_LABEL: &str = "Questions & Curiosities";
-    pub const CORRECTIONS_LABEL: &str = "Model Corrections";
+    pub const CORRECTIONS_LABEL: &str = "Corrections & Preference Changes";
 
     pub fn summary_line(work_summary: &str) -> String {
         format!("  Summary: {}", work_summary)
@@ -467,9 +468,9 @@ pub mod markdown {
     pub const WORK_SUMMARY_HEADER: &str = "### Work Summary";
     pub const DECISIONS_HEADER: &str = "### Key Decisions";
     pub const CURIOSITIES_HEADER: &str = "### Questions & Curiosities";
-    pub const CORRECTIONS_HEADER: &str = "### Model Errors & Corrections";
+    pub const CORRECTIONS_HEADER: &str = "### Corrections & Preference Changes";
     pub const CORRECTION_MODEL: &str = "**Model**";
-    pub const CORRECTION_FIX: &str = "**Fix**";
+    pub const CORRECTION_FIX: &str = "**User response**";
     /// Section header for development progress in daily Markdown files.
     pub const PROGRESS_SECTION_HEADER: &str = "## Development Progress";
 }

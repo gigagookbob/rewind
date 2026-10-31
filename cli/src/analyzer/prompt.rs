@@ -26,17 +26,32 @@ fn splice_timed_lines(
     messages: impl IntoIterator<Item = (Option<DateTime<Utc>>, String, String)>,
     lines: &[TimedLine],
 ) -> Vec<(String, String)> {
+    splice_timed_items(
+        messages
+            .into_iter()
+            .map(|(ts, role, text)| (ts, (role, text))),
+        lines,
+        |line| (line.role.to_string(), line.text.clone()),
+    )
+}
+
+// Speech and location lists must use the same ordering for injected lines.
+pub(super) fn splice_timed_items<T>(
+    messages: impl IntoIterator<Item = (Option<DateTime<Utc>>, T)>,
+    lines: &[TimedLine],
+    from_line: impl Fn(&TimedLine) -> T,
+) -> Vec<T> {
     let mut pending = lines.iter().peekable();
     let mut out = Vec::new();
-    for (ts, role, text) in messages {
+    for (ts, item) in messages {
         if let Some(ts) = ts {
             while let Some(line) = pending.next_if(|line| line.at < ts) {
-                out.push((line.role.to_string(), line.text.clone()));
+                out.push(from_line(line));
             }
         }
-        out.push((role, text));
+        out.push(item);
     }
-    out.extend(pending.map(|line| (line.role.to_string(), line.text.clone())));
+    out.extend(pending.map(from_line));
     out
 }
 
@@ -205,7 +220,7 @@ fn entry_session_id(entry: &LogEntry) -> Option<&str> {
     }
 }
 
-fn extract_entry_text(entry: &LogEntry) -> Option<(&'static str, String)> {
+pub(super) fn extract_entry_text(entry: &LogEntry) -> Option<(&'static str, String)> {
     let (role, text) = match entry {
         LogEntry::User(e) => {
             let mut parts = Vec::new();
@@ -358,7 +373,7 @@ fn codex_timed_role_text(entries: &[CodexEntry]) -> impl Iterator<Item = TimedMe
     })
 }
 
-fn codex_role_text(entry: &CodexEntry) -> Option<(String, String)> {
+pub(super) fn codex_role_text(entry: &CodexEntry) -> Option<(String, String)> {
     // Prompt policy:
     //   - USER / ASSISTANT messages keep full (compacted) text: they are the
     //     core material for insight extraction.
@@ -419,9 +434,8 @@ pub fn extract_session_ids(entries: &[LogEntry]) -> Vec<String> {
 }
 
 /// Conservative estimate for system prompt tokens.
-/// As of 2026-04-12, EN/KO system prompts estimate to ~1194/~1088 tokens via chars/2.
-/// Keep a safety margin to avoid under-estimating planner input size.
-pub const SYSTEM_PROMPT_ESTIMATED_TOKENS: u64 = 1_300;
+/// Includes the evidence and correction classification instructions, with margin.
+pub const SYSTEM_PROMPT_ESTIMATED_TOKENS: u64 = 2_400;
 
 /// Rough token estimate for text.
 /// Korean syllables are ~1 token each, so char_count / 2 is a conservative estimate.
@@ -476,6 +490,35 @@ pub fn estimate_sessions(entries: &[LogEntry]) -> Vec<SessionEstimate> {
 mod tests {
     use super::*;
     use crate::parser::claude::LogEntry;
+
+    #[test]
+    fn test_identical_meta_text_cannot_take_a_later_users_evidence_id() {
+        let mut entries = vec![
+            serde_json::from_str::<LogEntry>(r#"{"type":"user","sessionId":"s1","timestamp":"2026-10-31T00:00:00Z","uuid":"meta","isMeta":true,"message":{"content":"keep it simple"}}"#).unwrap(),
+            serde_json::from_str::<LogEntry>(r#"{"type":"user","sessionId":"s1","timestamp":"2026-10-31T00:01:00Z","uuid":"real","message":{"content":"keep it simple"}}"#).unwrap(),
+        ];
+        for (index, entry) in entries.iter_mut().enumerate() {
+            if let LogEntry::User(e) = entry {
+                e.source_location = Some(crate::parser::SourceLocation::new(
+                    std::path::Path::new("/tmp/synthetic.jsonl"),
+                    index + 4,
+                ));
+            }
+        }
+        let lines = [TimedLine {
+            at: "2026-10-31T00:00:30Z".parse().unwrap(),
+            role: "SUBAGENT_RESULT",
+            text: "keep it simple".into(),
+        }];
+        let sources = super::super::evidence::claude_source_messages(&entries, &lines);
+        let messages = extract_messages_with_lines(&entries, &lines);
+        let (annotated, catalog) = super::super::evidence::annotate_messages(&messages, &sources);
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(annotated[0].1, "keep it simple");
+        assert_eq!(annotated[1].1, "keep it simple");
+        assert!(annotated[2].1.starts_with("[m3] "));
+        assert_eq!(catalog["m3"].location.line, 5);
+    }
 
     const SYSTEM_PROMPT_EN_TEXT: &str = include_str!("../../prompts/system_en.md");
     const SYSTEM_PROMPT_KO_TEXT: &str = include_str!("../../prompts/system_ko.md");

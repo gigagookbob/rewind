@@ -448,6 +448,12 @@ mod tests {
             .count();
         assert_eq!(user_count, 1);
         assert_eq!(assistant_count, 1);
+        let (_, catalog) =
+            analyzer::evidence::annotate_messages(&task.messages, &task.evidence_sources);
+        assert_eq!(catalog.len(), 2);
+        assert_eq!(catalog["m2"].text, "hello");
+        assert_eq!(catalog["m2"].location.line, 2);
+        assert_eq!(catalog["m3"].location.line, 3);
     }
 
     #[test]

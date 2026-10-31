@@ -357,33 +357,47 @@ async fn execute_task(
 ) -> Result<(AnalysisResult, RedactResult, ApiUsage), AnalyzerError> {
     let prefix = if json_hint { JSON_RETRY_PREFIX } else { "" };
 
+    let (messages, mut catalog) =
+        super::evidence::annotate_messages(&planned.task.messages, &planned.task.evidence_sources);
+    let direct_prompt = if catalog.is_empty() {
+        // Unlocated inputs still support summaries and questions, but no evidence.
+        planned.task.prompt_text.clone()
+    } else {
+        let mut text = format!("[Session: {}]\n", planned.task.session_id);
+        for (role, message) in &messages {
+            text.push_str(&format!("[{role}] {message}\n"));
+        }
+        text
+    };
+
     let summarize = match planned.strategy {
-        StepStrategy::Direct => should_force_summarize_by_chars(
-            provider,
-            lang,
-            &planned.task.prompt_text,
-            prefix.chars().count(),
-        ),
+        StepStrategy::Direct => {
+            should_force_summarize_by_chars(provider, lang, &direct_prompt, prefix.chars().count())
+        }
         StepStrategy::Summarize { .. } => true,
     };
 
     let prompt = if summarize {
         let session_id = &planned.task.session_id;
-        let summary_text = summarize_session_messages(
-            &planned.task.messages,
-            session_id,
-            provider,
-            api_key,
-            limits,
-            lang,
-        )
-        .await?;
+        let summary_text =
+            summarize_session_messages(&messages, session_id, provider, api_key, limits, lang)
+                .await?;
         format!("{prefix}[Session: {session_id}]\n{summary_text}")
     } else {
-        format!("{prefix}{}", planned.task.prompt_text)
+        format!("{prefix}{direct_prompt}")
     };
 
-    analyze_prompt(prompt, provider, api_key, redactor_enabled, lang).await
+    // Compare quotes against the input after masking as well as original speech.
+    // The local file paths in the catalog are never sent to the provider.
+    if redactor_enabled {
+        for source in catalog.values_mut() {
+            source.rendered_text = crate::redactor::redact_text(&source.rendered_text).0;
+        }
+    }
+    let (mut result, redact, usage) =
+        analyze_prompt(prompt, provider, api_key, redactor_enabled, lang).await?;
+    super::evidence::validate(&mut result, &planned.task.session_id, &catalog);
+    Ok((result, redact, usage))
 }
 
 /// Splits a large session into chunks and returns the combined chunk summaries.

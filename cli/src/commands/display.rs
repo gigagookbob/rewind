@@ -9,7 +9,6 @@ const BRIGHT_BLUE: &str = "\x1b[94m";
 pub(super) const YELLOW: &str = "\x1b[33m";
 pub(super) const MAGENTA: &str = "\x1b[35m";
 const DIM: &str = "\x1b[2m";
-const RED: &str = "\x1b[31m";
 pub(super) const GREEN: &str = "\x1b[32m";
 pub(super) const RESET: &str = "\x1b[0m";
 
@@ -276,6 +275,7 @@ pub(super) fn print_insights(source_name: &str, analysis: &analyzer::AnalysisRes
     };
     let line = "─".repeat(line_len);
     println!("\n{CYAN}  ┌─ {source_name} {line}{RESET}");
+    println!("  {}", crate::messages::display::ATTRIBUTION_NOTE);
 
     for session in &analysis.sessions {
         // Show only the first 8 chars of session ID for readability
@@ -298,6 +298,7 @@ pub(super) fn print_insights(source_name: &str, analysis: &analyzer::AnalysisRes
             for d in &session.decisions {
                 println!("  • {}", d.what);
                 println!("    {DIM}→ {}{RESET}", d.why);
+                print!("{}", crate::output::display_evidence(&d.evidence));
             }
         }
 
@@ -317,9 +318,16 @@ pub(super) fn print_insights(source_name: &str, analysis: &analyzer::AnalysisRes
                 crate::messages::display::CORRECTIONS_LABEL
             );
             for c in &session.corrections {
-                println!("  {RED}\u{2717} {}{RESET}", c.model_said);
-                println!("  {GREEN}\u{2713} {}{RESET}", c.user_corrected);
+                println!("  {}", c.kind.label());
+                println!("    AI: {}", c.model_said);
+                println!("    User: {}", c.user_corrected);
+                print!("{}", crate::output::display_evidence(&c.evidence));
             }
+        }
+
+        for til in &session.til {
+            println!("\n  TIL: {}\n    {}", til.title, til.detail);
+            print!("{}", crate::output::display_evidence(&til.evidence));
         }
     }
 
@@ -352,6 +360,7 @@ mod tests {
     fn session(token_usage: Option<(u64, u64)>) -> CollectedSession {
         CollectedSession {
             task: SessionTask {
+                evidence_sources: vec![],
                 source: "codex",
                 session_id: "s1".to_string(),
                 prompt_text: String::new(),
@@ -419,6 +428,7 @@ mod tests {
             vec!["/claude-a".into(), "/claude-b".into()],
             vec![CollectedSession {
                 task: SessionTask {
+                    evidence_sources: vec![],
                     source: "claude",
                     session_id: "c0d5ead8-1234-5678".to_string(),
                     prompt_text: format!("[USER] {MARKER}\n"),

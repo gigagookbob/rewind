@@ -49,7 +49,7 @@ pub struct SessionInsight {
     /// Questions or confusions the user expressed.
     #[serde(deserialize_with = "vec_string_or_stringify")]
     pub curiosities: Vec<String>,
-    /// Cases where the user corrected the model's mistakes.
+    /// Factual corrections, preference/approach changes, or ambiguous responses.
     pub corrections: Vec<Correction>,
     /// Concrete learnings from this session (title + context).
     #[serde(default)]
@@ -60,6 +60,8 @@ pub struct SessionInsight {
 /// Extracted directly from the conversation by the LLM, not derived from curiosities/corrections.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TilItem {
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
     /// One-line summary of what was learned.
     #[serde(default, deserialize_with = "string_or_stringify")]
     pub title: String,
@@ -71,19 +73,57 @@ pub struct TilItem {
 /// A decision point (why option A was chosen over B).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Decision {
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
     #[serde(default, deserialize_with = "string_or_stringify")]
     pub what: String,
     #[serde(default, deserialize_with = "string_or_stringify")]
     pub why: String,
 }
 
-/// A correction where the user fixed a model mistake.
+/// A user response changing a claim or approach; kind distinguishes the two.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Correction {
+    #[serde(default)]
+    pub kind: CorrectionKind,
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
     #[serde(default, deserialize_with = "string_or_stringify")]
     pub model_said: String,
     #[serde(default, deserialize_with = "string_or_stringify")]
     pub user_corrected: String,
+}
+
+/// A quotation proposed by the model. The executor resolves its local location.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Evidence {
+    pub message_id: String,
+    pub quote: String,
+    #[serde(default)]
+    pub location: Option<crate::parser::SourceLocation>,
+    #[serde(default)]
+    pub role: String,
+}
+
+/// Legacy and ambiguous corrections must never default to factual errors.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrectionKind {
+    FactualError,
+    PreferenceChange,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+impl CorrectionKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::FactualError => "Factual correction / 사실 오류 정정",
+            Self::PreferenceChange => "Preference or approach change / 선호 또는 접근 방식 변경",
+            Self::Unknown => "Unclassified / 분류 미확인",
+        }
+    }
 }
 
 /// Parses Claude API raw text response into an AnalysisResult.

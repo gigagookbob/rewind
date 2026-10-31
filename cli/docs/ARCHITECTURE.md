@@ -17,6 +17,20 @@ rwd slack:       CLI entry → cache load → collect work_summaries → LLM API
 - Model errors corrected by the user
 - Context switches between sessions (which project, which task)
 
+### 회고 근거의 연결
+
+파서는 사용자 발언과 AI 응답에 `SourceLocation { path, line }`을 붙입니다. 위치는 로그 페이로드에서 받지 않고 파일을 읽을 때 정합니다. 날짜 필터, 중복 제거와 시간순 정렬 뒤에도 선택된 원본 위치를 보존합니다. Codex의 중복 사용자 기록과 여러 루트에서 발견한 같은 기록은 기존 중복 제거 규칙으로 선택한 파일과 줄을 가리킵니다.
+
+`SessionTask.evidence_sources`는 분석 입력의 발언 순번, 원래 대화 텍스트, 압축된 입력 텍스트와 원본 위치를 로컬에서 보관합니다. 서브에이전트 줄을 끼워 넣을 때도 발언 순번을 같이 계산하므로 문장이 같다는 이유로 다른 위치를 연결하지 않습니다. 실제 API 입력에는 파일 위치 대신 `[mN]` ID만 붙입니다. 긴 세션을 요약하는 프롬프트에도 ID와 짧은 원문 인용을 보존하도록 지시합니다.
+
+`Decision`, `TilItem`, `Correction`의 `evidence`는 `message_id`, `quote`, 로컬에서 연결한 `location`과 `role`을 담습니다. 공급자는 ID와 인용만 반환하며 Codex의 출력 스키마도 이 두 필드만 허용합니다. 공통 실행기는 모든 공급자의 분석 응답을 파싱한 뒤 같은 세션의 ID와 인용을 대조합니다. 인용은 원래 대화와 압축 또는 마스킹된 입력 양쪽에 연속된 부분 문자열로 있어야 합니다. 검사를 통과하지 못한 근거가 하나라도 있으면 해당 항목을 제외합니다. 결정과 TIL에는 사용자 근거, 정정에는 AI와 사용자 양쪽 근거를 요구합니다.
+
+`Correction.kind`는 `factual_error`, `preference_change`, `unknown`입니다. 한국어와 영어 프롬프트가 사실 주장 정정과 선호 또는 접근 방식 변경을 구분하도록 지시합니다. 누락된 값과 알 수 없는 값은 `unknown`으로 읽으며, 정정 내용을 독립적으로 사실 확인했다는 의미로 쓰지 않습니다.
+
+기존 캐시와 JSON 결과는 Serde 기본값으로 읽습니다. 누락된 `evidence`는 빈 배열이며 근거 미확인으로 표시합니다. 예전 결과를 새로 검증한 것처럼 승격하거나 캐시 버전 때문에 자동 재분석하지 않습니다. 새 결과에는 검사를 통과한 인용과 위치를 캐시하고 터미널과 Markdown에 표시합니다. 원본 로그가 이동하거나 수정되면 캐시에 남은 위치가 현재 파일과 다를 수 있습니다.
+
+검증 범위는 합성 로그의 위치 보존, 인용 대조, 분류 값과 기본값, 캐시 저장과 복원, 출력 표시입니다. 실제 AI의 추출과 분류 정확도는 별도로 측정해야 합니다. 인용의 존재를 검사하는 코드는 이유와 학습의 의미가 맞는지 판정하지 않습니다.
+
 ## Two-Stage Processing
 
 1. **Parsing stage (rule-based)**: Transforms log files into structured data

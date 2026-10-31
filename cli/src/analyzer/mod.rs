@@ -3,6 +3,7 @@
 pub mod anthropic;
 pub mod codex_exec;
 pub mod compaction;
+pub mod evidence;
 mod executor;
 pub mod insight;
 pub mod openai;
@@ -34,6 +35,7 @@ use std::collections::HashMap;
 /// Common per-session analysis input shared by every log source.
 #[derive(Debug, Clone)]
 pub struct SessionTask {
+    pub evidence_sources: Vec<evidence::SourceMessage>,
     /// Id of the source adapter that built this task (e.g. "claude"), for `-v` output.
     pub source: &'static str,
     pub session_id: String,
@@ -180,11 +182,12 @@ pub fn build_claude_session_tasks(
             .unwrap_or_else(|| prompt::estimate_prompt_tokens(&prompt_text));
 
         tasks.push(SessionTask {
+            evidence_sources: evidence::claude_source_messages(&session_entries, lines),
             source,
             session_id,
             prompt_text,
+            estimated_tokens: estimated_tokens + messages.len() as u64 * 8,
             messages,
-            estimated_tokens,
         });
     }
 
@@ -201,9 +204,10 @@ pub fn build_codex_session_task(
 ) -> Result<SessionTask, AnalyzerError> {
     let prompt_text = prompt::build_codex_prompt_with_lines(entries, session_id, lines)?;
     let messages = prompt::extract_codex_messages_with_lines(entries, lines);
-    let estimated_tokens = prompt::estimate_prompt_tokens(&prompt_text);
+    let estimated_tokens = prompt::estimate_prompt_tokens(&prompt_text) + messages.len() as u64 * 8;
 
     Ok(SessionTask {
+        evidence_sources: evidence::codex_source_messages(entries, lines),
         source,
         session_id: session_id.to_string(),
         prompt_text,

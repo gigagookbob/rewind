@@ -483,6 +483,12 @@ mod tests {
         assert_eq!(collection.sessions.len(), 1);
         let task = &collection.sessions[0].task;
         assert_eq!(task.session_id, "claude-s1");
+        let (_, catalog) =
+            analyzer::evidence::annotate_messages(&task.messages, &task.evidence_sources);
+        assert_eq!(catalog.len(), 3);
+        assert_eq!(catalog["m2"].text, "The timezone key changed.");
+        assert_eq!(catalog["m2"].location.line, 2);
+        assert!(!catalog["m2"].text.contains("Check the key."));
         assert_eq!(
             task.prompt_text,
             "[Session: claude-s1]\n\
