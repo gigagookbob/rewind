@@ -31,6 +31,8 @@ const USER_REQUEST_CLOSE: &str = "</USER_REQUEST>";
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct TranscriptStep {
+    #[serde(skip)]
+    pub source_location: Option<super::SourceLocation>,
     /// Step number inside the conversation; this order is the conversation order.
     pub step_index: Option<u64>,
     #[serde(rename = "type")]
@@ -65,7 +67,7 @@ pub fn parse_transcript_file(path: &Path) -> Result<Vec<TranscriptStep>, super::
 
     // Split on raw bytes: a line cut in the middle of a multi-byte character
     // must only drop that line, not fail the whole file.
-    for line in reader.split(b'\n') {
+    for (line_num, line) in reader.split(b'\n').enumerate() {
         let line = line?;
         let Ok(text) = std::str::from_utf8(&line) else {
             continue;
@@ -73,7 +75,8 @@ pub fn parse_transcript_file(path: &Path) -> Result<Vec<TranscriptStep>, super::
         if text.trim().is_empty() {
             continue;
         }
-        if let Ok(step) = serde_json::from_str::<TranscriptStep>(text) {
+        if let Ok(mut step) = serde_json::from_str::<TranscriptStep>(text) {
+            step.source_location = Some(super::SourceLocation::new(path, line_num + 1));
             steps.push(step);
         }
     }
@@ -131,6 +134,18 @@ pub fn read_history_conversation_ids(path: &Path) -> Option<HashSet<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_source_location_antigravity_ignores_payload_location() {
+        let path =
+            std::env::temp_dir().join(format!("rwd-agy-location-{}.jsonl", std::process::id()));
+        std::fs::write(&path, "\ninvalid\n{\"type\":\"USER_INPUT\",\"content\":\"hello\",\"source_location\":{\"path\":\"fake\",\"line\":99}}\n").unwrap();
+        let steps = parse_transcript_file(&path).unwrap();
+        let location = steps[0].source_location.as_ref().unwrap();
+        assert_eq!(location.path, path);
+        assert_eq!(location.line, 3);
+        std::fs::remove_file(path).unwrap();
+    }
     use std::path::PathBuf;
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {

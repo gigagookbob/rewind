@@ -593,10 +593,12 @@ mod tests {
         use crate::parser::codex::CodexEntry;
         let entries = vec![
             CodexEntry::UserMessage {
+                source_location: None,
                 timestamp: "2026-03-11T10:00:00Z".parse().unwrap(),
                 text: "프로젝트 구조를 알려줘".to_string(),
             },
             CodexEntry::AssistantMessage {
+                source_location: None,
                 timestamp: "2026-03-11T10:00:30Z".parse().unwrap(),
                 text: "src/ 디렉토리를 확인했습니다".to_string(),
             },
@@ -624,10 +626,12 @@ mod tests {
                 text: "s1\n/tmp\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
+                source_location: None,
                 timestamp: "2026-03-11T10:00:00Z".parse().unwrap(),
                 text: "질문".to_string(),
             },
             CodexEntry::AssistantMessage {
+                source_location: None,
                 timestamp: "2026-03-11T10:00:10Z".parse().unwrap(),
                 text: "답변".to_string(),
             },
@@ -663,6 +667,7 @@ mod tests {
         use crate::parser::codex::CodexEntry;
         let entries = vec![
             CodexEntry::UserMessage {
+                source_location: None,
                 timestamp: "2026-03-11T10:00:00Z".parse().unwrap(),
                 text: "리뷰해줘".to_string(),
             },
@@ -677,6 +682,7 @@ mod tests {
                 text: "... multi-MB tool result ...".to_string(),
             },
             CodexEntry::AssistantMessage {
+                source_location: None,
                 timestamp: "2026-03-11T10:00:10Z".parse().unwrap(),
                 text: "완료".to_string(),
             },
@@ -809,10 +815,12 @@ mod tests {
                 text: "s1".to_string(),
             },
             CodexEntry::UserMessage {
+                source_location: None,
                 timestamp: "2026-03-11T10:00:00Z".parse().unwrap(),
                 text: "q".to_string(),
             },
             CodexEntry::AssistantMessage {
+                source_location: None,
                 timestamp: "2026-03-11T10:10:00Z".parse().unwrap(),
                 text: "a".to_string(),
             },

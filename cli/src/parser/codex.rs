@@ -52,6 +52,7 @@ pub enum CodexEntry {
     },
     /// User input message
     UserMessage {
+        source_location: Option<super::SourceLocation>,
         timestamp: DateTime<Utc>,
         /// Typed text only: `event_msg` `message`, or `input_text` blocks
         /// without app-injected context.
@@ -59,6 +60,7 @@ pub enum CodexEntry {
     },
     /// Assistant (AI) text response
     AssistantMessage {
+        source_location: Option<super::SourceLocation>,
         timestamp: DateTime<Utc>,
         /// `output_text` blocks only. Also a subagent's final result.
         text: String,
@@ -268,6 +270,7 @@ impl CodexEntry {
             // `kind`) are not what the user typed (SPEC.md, Codex prompt text).
             "event_msg" if payload["type"].as_str() == Some("user_message") => {
                 CodexEntry::UserMessage {
+                    source_location: None,
                     timestamp: ts,
                     text: payload["message"]
                         .as_str()
@@ -289,6 +292,7 @@ impl CodexEntry {
                     }
                 } else {
                     CodexEntry::UserMessage {
+                        source_location: None,
                         timestamp: ts,
                         text,
                     }
@@ -302,6 +306,7 @@ impl CodexEntry {
                 // carry only ids, `phase`, `status`, and type names
                 // (SPEC.md, Codex prompt text).
                 CodexEntry::AssistantMessage {
+                    source_location: None,
                     timestamp: ts,
                     text: extract_codex_output_text(payload).trim().to_string(),
                 }
@@ -523,7 +528,19 @@ pub fn parse_codex_jsonl_file(path: &Path) -> Result<Vec<CodexEntry>, super::Par
                 if response_user {
                     response_user_indices.insert(entries.len());
                 }
-                entries.push(CodexEntry::from_raw(raw));
+                let mut entry = CodexEntry::from_raw(raw);
+                match &mut entry {
+                    CodexEntry::UserMessage {
+                        source_location, ..
+                    }
+                    | CodexEntry::AssistantMessage {
+                        source_location, ..
+                    } => {
+                        *source_location = Some(super::SourceLocation::new(path, line_num + 1));
+                    }
+                    _ => {}
+                }
+                entries.push(entry);
             }
             Err(err) => {
                 eprintln!(
@@ -544,7 +561,9 @@ pub fn parse_codex_jsonl_file(path: &Path) -> Result<Vec<CodexEntry>, super::Par
         .enumerate()
         .filter_map(|(index, entry)| {
             if response_user_indices.contains(&index)
-                && let CodexEntry::UserMessage { timestamp, text } = &entry
+                && let CodexEntry::UserMessage {
+                    timestamp, text, ..
+                } = &entry
                 && event_users.get_mut(text.trim()).is_some_and(|times| {
                     let matched = times
                         .iter()
@@ -629,16 +648,18 @@ fn entry_fingerprint(entry: &CodexEntry) -> CodexEntryFingerprint {
             agent_path: agent_path.clone(),
             text: text.clone(),
         },
-        CodexEntry::UserMessage { timestamp, text } => CodexEntryFingerprint::UserMessage {
+        CodexEntry::UserMessage {
+            timestamp, text, ..
+        } => CodexEntryFingerprint::UserMessage {
             timestamp_millis: timestamp.timestamp_millis(),
             text: text.clone(),
         },
-        CodexEntry::AssistantMessage { timestamp, text } => {
-            CodexEntryFingerprint::AssistantMessage {
-                timestamp_millis: timestamp.timestamp_millis(),
-                text: text.clone(),
-            }
-        }
+        CodexEntry::AssistantMessage {
+            timestamp, text, ..
+        } => CodexEntryFingerprint::AssistantMessage {
+            timestamp_millis: timestamp.timestamp_millis(),
+            text: text.clone(),
+        },
         CodexEntry::AgentMessage {
             timestamp,
             recipient,
@@ -746,6 +767,23 @@ pub fn summarize_codex_entries(entries: &[CodexEntry]) -> CodexSessionSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_source_location_survives_codex_deduplication() {
+        let path =
+            std::env::temp_dir().join(format!("rwd-codex-location-{}.jsonl", std::process::id()));
+        std::fs::write(&path, "\n{\"timestamp\":\"2026-10-31T00:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"keep it simple\"}}\n").unwrap();
+        let entries = dedupe_entries(parse_codex_jsonl_file(&path).unwrap());
+        let CodexEntry::UserMessage {
+            source_location, ..
+        } = &entries[0]
+        else {
+            panic!("user entry")
+        };
+        assert_eq!(source_location.as_ref().unwrap().line, 2);
+        assert_eq!(source_location.as_ref().unwrap().path, path);
+        std::fs::remove_file(path).unwrap();
+    }
     use std::io::Write;
 
     #[test]
@@ -1147,10 +1185,12 @@ mod tests {
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
+                source_location: None,
                 timestamp: ts,
                 text: "hello".to_string(),
             },
             CodexEntry::UserMessage {
+                source_location: None,
                 timestamp: ts,
                 text: "hello".to_string(),
             },
@@ -1215,18 +1255,22 @@ mod tests {
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
+                source_location: None,
                 timestamp: yesterday_ts,
                 text: "old msg".to_string(),
             },
             CodexEntry::AssistantMessage {
+                source_location: None,
                 timestamp: yesterday_ts,
                 text: "old reply".to_string(),
             },
             CodexEntry::UserMessage {
+                source_location: None,
                 timestamp: today_ts,
                 text: "new msg".to_string(),
             },
             CodexEntry::AssistantMessage {
+                source_location: None,
                 timestamp: today_ts,
                 text: "new reply".to_string(),
             },
@@ -1264,6 +1308,7 @@ mod tests {
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
+                source_location: None,
                 timestamp: yesterday_ts,
                 text: "old msg".to_string(),
             },
@@ -1295,10 +1340,12 @@ mod tests {
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
+                source_location: None,
                 timestamp: today_ts,
                 text: "msg".to_string(),
             },
             CodexEntry::AssistantMessage {
+                source_location: None,
                 timestamp: today_ts,
                 text: "reply".to_string(),
             },
@@ -1332,18 +1379,22 @@ mod tests {
                 text: "s1\n/p\nopenai".to_string(),
             },
             CodexEntry::UserMessage {
+                source_location: None,
                 timestamp: window.start_utc - chrono::Duration::nanoseconds(1),
                 text: "before_start".to_string(),
             },
             CodexEntry::UserMessage {
+                source_location: None,
                 timestamp: window.start_utc,
                 text: "at_start".to_string(),
             },
             CodexEntry::AssistantMessage {
+                source_location: None,
                 timestamp: window.end_utc - chrono::Duration::nanoseconds(1),
                 text: "before_end".to_string(),
             },
             CodexEntry::AssistantMessage {
+                source_location: None,
                 timestamp: window.end_utc,
                 text: "at_end".to_string(),
             },

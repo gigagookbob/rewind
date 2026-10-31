@@ -36,6 +36,8 @@ pub enum LogEntry {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserEntry {
+    #[serde(skip)]
+    pub source_location: Option<super::SourceLocation>,
     pub timestamp: DateTime<Utc>,
     pub session_id: String,
     pub uuid: String,
@@ -134,6 +136,8 @@ pub fn subagent_tool_result(entry: &UserEntry) -> Option<SubagentToolResult> {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssistantEntry {
+    #[serde(skip)]
+    pub source_location: Option<super::SourceLocation>,
     pub timestamp: DateTime<Utc>,
     pub session_id: String,
     pub uuid: String,
@@ -378,7 +382,15 @@ pub fn parse_jsonl_file(path: &Path) -> Result<Vec<LogEntry>, super::ParseError>
         }
 
         match serde_json::from_str::<LogEntry>(&line) {
-            Ok(entry) => entries.push(entry),
+            Ok(mut entry) => {
+                let location = Some(super::SourceLocation::new(path, line_num + 1));
+                match &mut entry {
+                    LogEntry::User(e) => e.source_location = location,
+                    LogEntry::Assistant(e) => e.source_location = location,
+                    _ => {}
+                }
+                entries.push(entry);
+            }
             Err(err) => {
                 eprintln!(
                     "Warning: Failed to parse line {} in {}: {}",
@@ -706,6 +718,21 @@ pub fn summarize_entries(entries: &[LogEntry]) -> Vec<SessionSummary> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_source_location_counts_blank_and_invalid_lines() {
+        let path =
+            std::env::temp_dir().join(format!("rwd-claude-location-{}.jsonl", std::process::id()));
+        std::fs::write(&path, "\ninvalid\n{\"type\":\"user\",\"timestamp\":\"2026-10-31T00:00:00Z\",\"sessionId\":\"s1\",\"uuid\":\"u1\",\"message\":{\"content\":\"Use a simple function\"}}\n").unwrap();
+        let entries = parse_jsonl_file(&path).unwrap();
+        let LogEntry::User(user) = &entries[0] else {
+            panic!("user entry")
+        };
+        let location = user.source_location.as_ref().unwrap();
+        assert_eq!(location.path, path);
+        assert_eq!(location.line, 3);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn test_parse_user_entry_returns_user_variant() {

@@ -14,6 +14,23 @@ pub mod codex;
 // TODO: Replace with a dedicated error type via thiserror.
 pub type ParseError = Box<dyn std::error::Error>;
 
+/// Local JSONL position, assigned by the file reader, never by log payloads.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SourceLocation {
+    pub path: std::path::PathBuf,
+    /// One-based physical line, including blank and malformed lines.
+    pub line: usize,
+}
+
+impl SourceLocation {
+    pub fn new(path: &std::path::Path, line: usize) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            line,
+        }
+    }
+}
+
 /// UTC half-open time window [start_utc, end_utc) for one local date.
 #[derive(Debug, Clone, Copy)]
 pub struct UtcDateWindow {
