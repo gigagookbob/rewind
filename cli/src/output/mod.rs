@@ -1,6 +1,8 @@
 // Converts analysis results to Markdown and saves them to the Obsidian vault.
 
+mod managed;
 pub mod markdown;
+mod vault;
 
 // TODO: Replace with a dedicated error type via thiserror.
 pub type OutputError = Box<dyn std::error::Error>;
@@ -23,7 +25,7 @@ pub fn load_vault_path() -> Result<PathBuf, OutputError> {
     Ok(path)
 }
 
-/// Saves Markdown content to the output path with a date-based filename.
+/// Updates only the unchanged rwd analysis region in the dated note.
 /// The output.path is expected to be the final directory (e.g., vault/Daily),
 /// so no additional subdirectories are appended.
 pub fn save_to_vault(
@@ -31,14 +33,7 @@ pub fn save_to_vault(
     date: NaiveDate,
     content: &str,
 ) -> Result<PathBuf, OutputError> {
-    std::fs::create_dir_all(vault_path)?;
-
-    let filename = format!("{date}.md");
-    let file_path = vault_path.join(&filename);
-
-    std::fs::write(&file_path, content)?;
-
-    Ok(file_path)
+    vault::save(vault_path, date, managed::Section::Analysis, content)
 }
 
 /// Shared evidence text. Strip control characters before printing to a terminal.
@@ -128,6 +123,24 @@ mod tests {
     }
 
     #[test]
+    fn test_save_preserves_existing_notes_on_reanalysis() {
+        let dir = std::env::temp_dir().join(format!("rwd_preserve_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let date = NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
+        let path = dir.join(format!("{date}.md"));
+        let note =
+            "---\ntitle: My day\n---\n# My day\n\n## Development Progress\nManual progress\n";
+        std::fs::write(&path, note).unwrap();
+        save_to_vault(&dir, date, "New analysis").unwrap();
+        save_to_vault(&dir, date, "Reanalysis").unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(saved.starts_with(note));
+        assert!(saved.contains("Reanalysis"));
+        assert!(!saved.contains("New analysis"));
+    }
+
+    #[test]
     fn test_save_to_vault_creates_file() {
         let temp_dir = std::env::temp_dir().join("rwd_test_output");
         std::fs::create_dir_all(&temp_dir).expect("failed to create temp dir");
@@ -141,12 +154,11 @@ mod tests {
         let saved_path = result.expect("save succeeded");
         assert!(saved_path.exists());
         assert!(saved_path.starts_with(&temp_dir));
-        assert_eq!(
-            std::fs::read_to_string(&saved_path).expect("read file"),
-            content
-        );
+        let saved = std::fs::read_to_string(&saved_path).expect("read file");
+        assert!(saved.contains(content));
+        assert_eq!(save_to_vault(&temp_dir, date, content).unwrap(), saved_path);
+        assert_eq!(std::fs::read_to_string(&saved_path).unwrap(), saved);
 
-        std::fs::remove_file(&saved_path).ok();
-        std::fs::remove_dir(&temp_dir).ok();
+        std::fs::remove_dir_all(&temp_dir).ok();
     }
 }
