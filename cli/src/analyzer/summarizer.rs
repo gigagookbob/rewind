@@ -3,6 +3,7 @@
 // Splits sessions exceeding ITPM into message-level chunks,
 // summarizes each chunk via the LLM, then combines results.
 
+use super::evidence::InputFragment;
 use super::planner::RateLimits;
 use super::prompt::estimate_tokens;
 
@@ -19,17 +20,18 @@ const CHUNK_HEADER_RESERVE_CHARS: usize = 128;
 const CHUNK_SUMMARIZE_PROMPT_EN: &str = include_str!("../../prompts/chunk_summarize_en.md");
 const CHUNK_SUMMARIZE_PROMPT_KO: &str = include_str!("../../prompts/chunk_summarize_ko.md");
 
-/// A type alias names the existing role/text vector; it does not create a new type.
-pub type Chunk = Vec<(String, String)>;
+pub type Chunk = Vec<InputFragment>;
 
 struct SummaryInputs {
     inputs: Vec<(usize, String)>,
     coverage_notice: Option<String>,
+    source_fragments: Chunk,
 }
 
 pub struct ChunkSummary {
     pub text: String,
     pub coverage_notice: Option<String>,
+    pub source_fragments: Chunk,
 }
 
 fn selected_chunk_indices(total: usize) -> Vec<usize> {
@@ -58,8 +60,8 @@ fn prepare_summary_inputs(
                 index + 1,
                 chunks.len()
             );
-            for (role, message) in &chunks[index] {
-                text.push_str(&format!("[{role}] {message}\n"));
+            for fragment in &chunks[index] {
+                text.push_str(&format!("[{}] {}\n", fragment.role, fragment.text));
             }
             (index + 1, text)
         })
@@ -67,6 +69,10 @@ fn prepare_summary_inputs(
     Ok(SummaryInputs {
         inputs,
         coverage_notice,
+        source_fragments: selected_chunk_indices(chunks.len())
+            .into_iter()
+            .flat_map(|index| chunks[index].iter().cloned())
+            .collect(),
     })
 }
 
@@ -90,6 +96,7 @@ fn combine_summaries(
     Ok(ChunkSummary {
         text: sections.join("\n\n"),
         coverage_notice: plan.coverage_notice.clone(),
+        source_fragments: plan.source_fragments.clone(),
     })
 }
 
@@ -140,7 +147,7 @@ pub fn split_into_chunks(
     let token_chars = usize::try_from(itpm.saturating_mul(2)).unwrap_or(usize::MAX);
     let max_chunk_chars = max_chunk_chars.min(token_chars);
 
-    for (role, text) in messages {
+    for (index, (role, text)) in messages.iter().enumerate() {
         let parts = split_message_text_by_chars(role, text, max_chunk_chars)?;
         for part in parts {
             let msg_chars = rendered_message_chars(role, &part);
@@ -154,7 +161,11 @@ pub fn split_into_chunks(
                 current_chars = 0;
             }
 
-            current_chunk.push((role.clone(), part));
+            current_chunk.push(InputFragment {
+                message_index: index + 1,
+                role: role.clone(),
+                text: part,
+            });
             current_chars = current_chars.saturating_add(msg_chars);
         }
     }
@@ -282,10 +293,60 @@ mod tests {
     use super::*;
     const TEST_MAX_CHARS: usize = 1_048_576;
 
+    fn fragment(message_index: usize, role: &str, text: &str) -> InputFragment {
+        InputFragment {
+            message_index,
+            role: role.into(),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn test_summary_cannot_cite_an_omitted_original_message() {
+        use super::super::{evidence, insight};
+        let messages: Vec<(String, String)> = (1..=4)
+            .map(|i| ("USER".into(), format!("decision-{i}")))
+            .collect();
+        let sources = messages
+            .iter()
+            .enumerate()
+            .map(|(i, (role, text))| evidence::SourceMessage {
+                message_index: i + 1,
+                role: role.clone(),
+                text: text.clone(),
+                rendered_text: text.clone(),
+                location: crate::parser::SourceLocation {
+                    path: "synthetic.jsonl".into(),
+                    line: i + 1,
+                },
+            })
+            .collect::<Vec<_>>();
+        let (annotated, catalog) = evidence::annotate_messages(&messages, &sources);
+        let chunks = split_into_chunks(&annotated, 100, 24).unwrap();
+        assert_eq!(chunks.len(), 4);
+        let plan = prepare_summary_inputs(&chunks, &Lang::En).unwrap();
+        assert!(
+            !plan
+                .inputs
+                .iter()
+                .any(|(_, input)| input.contains("decision-2"))
+        );
+        let mut result = insight::parse_response(
+            r#"{"sessions":[{
+            "session_id":"s1","work_summary":"partial","decisions":[{
+                "what":"hidden","evidence":[{"message_id":"m2","quote":"decision-2"}]
+            }],"curiosities":[],"corrections":[],"til":[]
+        }]}"#,
+        )
+        .unwrap();
+        evidence::validate_summary(&mut result, "s1", &catalog, &plan.source_fragments, false);
+        assert!(result.sessions[0].decisions.is_empty());
+    }
+
     #[test]
     fn test_long_session_tail_keeps_source_locations_and_rejects_synthetic_evidence() {
         use super::super::{evidence, insight};
-        let messages: Chunk = vec![
+        let messages: Vec<(String, String)> = vec![
             ("USER".into(), "A를 선택합니다".into()),
             ("ASSISTANT".into(), "빌드가 실패했습니다".into()),
             ("META".into(), "중간 작업 ".repeat(300)),
@@ -335,7 +396,13 @@ mod tests {
                     {"message_id":"m6","quote":"테스트는 여전히 실패했습니다"},
                     {"message_id":"m1","quote":"A를 선택합니다"}]}
             ]}] }"#).unwrap();
-        evidence::validate(&mut result, "s1", &catalog);
+        evidence::validate_summary(
+            &mut result,
+            "s1",
+            &catalog,
+            &summary.source_fragments,
+            false,
+        );
         let session = &result.sessions[0];
         assert_eq!(session.decisions.len(), 1);
         assert_eq!(
@@ -403,7 +470,13 @@ mod tests {
     #[test]
     fn test_summary_combination_keeps_source_order_labels_and_omission_notice() {
         let chunks: Vec<Chunk> = (1..=5)
-            .map(|i| vec![("USER".into(), format!("[m{i}] text{i}"))])
+            .map(|i| {
+                vec![InputFragment {
+                    message_index: i,
+                    role: "USER".into(),
+                    text: format!("[m{i}] text{i}"),
+                }]
+            })
             .collect();
         let plan = prepare_summary_inputs(&chunks, &Lang::En).unwrap();
         // Echoing is a local stand-in for a model, testing transport rather than semantics.
@@ -435,24 +508,28 @@ mod tests {
     #[test]
     fn test_selected_inputs_include_changed_decision_resolution_and_final_correction() {
         let chunks = vec![
-            vec![(
-                "USER".into(),
-                "[m1] A를 선택합니다. 빌드가 실패했습니다.".into(),
+            vec![fragment(
+                1,
+                "USER",
+                "[m1] A를 선택합니다. 빌드가 실패했습니다.",
             )],
-            vec![("ASSISTANT".into(), "[m2] 중간 작업".into())],
+            vec![fragment(2, "ASSISTANT", "[m2] 중간 작업")],
             vec![
-                (
-                    "ASSISTANT".into(),
-                    "[m3] A로 진행합니다. 테스트는 실패했습니다.".into(),
+                fragment(
+                    3,
+                    "ASSISTANT",
+                    "[m3] A로 진행합니다. 테스트는 실패했습니다.",
                 ),
-                (
-                    "USER".into(),
-                    "[m4] B로 바꿉니다. 설정 수정 후 빌드가 통과했습니다.".into(),
+                fragment(
+                    4,
+                    "USER",
+                    "[m4] B로 바꿉니다. 설정 수정 후 빌드가 통과했습니다.",
                 ),
             ],
-            vec![(
-                "USER".into(),
-                "[m5] 마지막 정정입니다. 테스트도 모두 통과했습니다.".into(),
+            vec![fragment(
+                5,
+                "USER",
+                "[m5] 마지막 정정입니다. 테스트도 모두 통과했습니다.",
             )],
         ];
         let plan = prepare_summary_inputs(&chunks, &Lang::Ko).unwrap();
@@ -482,10 +559,13 @@ mod tests {
         assert!(chunks.len() > 1);
         let mut restored = String::new();
         for chunk in chunks {
-            let rendered: String = chunk.iter().map(|(r, t)| format!("[{r}] {t}\n")).collect();
+            let rendered: String = chunk
+                .iter()
+                .map(|f| format!("[{}] {}\n", f.role, f.text))
+                .collect();
             assert!(estimate_tokens(&rendered) <= 25);
-            for (_, text) in chunk {
-                restored.push_str(&text);
+            for fragment in chunk {
+                restored.push_str(&fragment.text);
             }
         }
         assert_eq!(restored, messages[0].1);
@@ -498,9 +578,10 @@ mod tests {
         assert!(chunks.len() > 2);
         let mut restored = String::new();
         for chunk in chunks {
-            for (role, part) in chunk {
-                assert_eq!(role, "USER");
-                restored.push_str(part.strip_prefix("[m42] ").expect("original ID"));
+            for fragment in chunk {
+                assert_eq!(fragment.role, "USER");
+                assert_eq!(fragment.message_index, 1);
+                restored.push_str(fragment.text.strip_prefix("[m42] ").expect("original ID"));
             }
         }
         assert_eq!(format!("[m42] {restored}"), text);
@@ -520,7 +601,7 @@ mod tests {
         for chunk in chunks {
             let chars: usize = chunk
                 .iter()
-                .map(|(r, t)| rendered_message_chars(r, t))
+                .map(|f| rendered_message_chars(&f.role, &f.text))
                 .sum();
             assert!(chars <= 60);
         }
@@ -534,7 +615,7 @@ mod tests {
         }
         let chunks = split_into_chunks(&messages, 100, 16).unwrap();
         assert_eq!(chunks.len(), 4);
-        assert_eq!(chunks.last().unwrap()[0].1, "[m123] t");
+        assert_eq!(chunks.last().unwrap()[0].text, "[m123] t");
     }
 
     #[test]
@@ -546,7 +627,17 @@ mod tests {
         ];
         assert_eq!(
             split_into_chunks(&messages, 100, 200).unwrap(),
-            vec![messages]
+            vec![
+                messages
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (role, text))| InputFragment {
+                        message_index: i + 1,
+                        role,
+                        text
+                    })
+                    .collect::<Chunk>()
+            ]
         );
     }
 
@@ -572,7 +663,7 @@ mod tests {
         for chunk in chunks {
             let rendered: usize = chunk
                 .iter()
-                .map(|(role, text)| rendered_message_chars(role, text))
+                .map(|f| rendered_message_chars(&f.role, &f.text))
                 .sum();
             assert!(rendered <= 64);
         }

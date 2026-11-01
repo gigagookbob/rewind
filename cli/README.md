@@ -170,6 +170,8 @@ AI는 입력에 붙인 `m1` 같은 발언 ID와 원문 인용만 반환합니다
 
 원문 ID와 인용을 중간 요약에서 잃으면 해당 근거가 필요한 항목은 제외될 수 있습니다. 로컬 테스트는 처리 범위, 순서와 원문 대조를 확인하며 실제 모델이 결론을 빠짐없이 요약하는지는 보장하지 않습니다. 기존 중간 요약 경로의 비밀값 마스킹 누락은 별도 개선 대상입니다.
 
+요약을 거친 근거는 실제로 선택한 조각 안의 같은 발언 부분에도 인용이 있어야 합니다. 같은 긴 발언의 제외된 부분을 인용하거나, 다른 발언에 적힌 ID를 빌려 원문 위치를 붙이지 않습니다. 직접 분석도 재시도 안내와 마스킹을 포함한 최종 입력 길이를 검사하며, 응답에 해당 세션이 없으면 오류를 반환합니다.
+
 ### Preview with `--dry-run`
 
 `rwd today --dry-run` collects sessions and prints, per source, the log folder, each session (short id, time range, user and assistant message counts, estimated tokens), and how many sessions were excluded and why. It then exits.

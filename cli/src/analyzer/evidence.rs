@@ -18,6 +18,14 @@ pub struct SourceMessage {
     pub location: SourceLocation,
 }
 
+/// Local provenance survives splitting even when unlocated text contains fake IDs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputFragment {
+    pub message_index: usize,
+    pub role: String,
+    pub text: String,
+}
+
 /// Only original visible speech can support quotations, not thinking, metadata,
 /// tool markers, or injected compact summaries. Keep the existing prompt intact.
 pub fn claude_source_messages(entries: &[LogEntry], lines: &[TimedLine]) -> Vec<SourceMessage> {
@@ -180,6 +188,49 @@ pub fn validate(
     }
 }
 
+/// In addition to original-source checks, require every quote to occur inside
+/// one actually selected fragment of that same message. Never bridge a gap.
+pub fn validate_summary(
+    result: &mut AnalysisResult,
+    session_id: &str,
+    catalog: &HashMap<String, SourceMessage>,
+    fragments: &[InputFragment],
+    redactor_enabled: bool,
+) {
+    let mut allowed: HashMap<String, Vec<String>> = HashMap::new();
+    for fragment in fragments {
+        let id = format!("m{}", fragment.message_index);
+        let Some(source) = catalog.get(&id) else {
+            continue;
+        };
+        if fragment.role != source.role {
+            continue;
+        }
+        let Some(payload) = fragment.text.strip_prefix(&format!("[{id}] ")) else {
+            continue;
+        };
+        let payload = if redactor_enabled {
+            crate::redactor::redact_text(payload).0
+        } else {
+            payload.to_string()
+        };
+        allowed.entry(id).or_default().push(payload);
+    }
+    let supported = |proofs: &[Evidence]| {
+        proofs.iter().all(|proof| {
+            allowed
+                .get(&proof.message_id)
+                .is_some_and(|parts| parts.iter().any(|part| part.contains(&proof.quote)))
+        })
+    };
+    for session in &mut result.sessions {
+        session.decisions.retain(|item| supported(&item.evidence));
+        session.til.retain(|item| supported(&item.evidence));
+        session.corrections.retain(|item| supported(&item.evidence));
+    }
+    validate(result, session_id, catalog);
+}
+
 fn has_user(evidence: &[Evidence]) -> bool {
     evidence.iter().any(|e| e.role == "USER")
 }
@@ -312,6 +363,76 @@ mod tests {
             .to_string(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn test_summary_checks_each_selected_fragment_and_its_local_position() {
+        let sources = vec![source("USER", "HEAD MIDDLE TAIL", 9)];
+        let messages = vec![("USER".into(), sources[0].text.clone())];
+        let (_, catalog) = annotate_messages(&messages, &sources);
+        let fragments = vec![
+            InputFragment {
+                message_index: 1,
+                role: "USER".into(),
+                text: "[m1] HEAD".into(),
+            },
+            InputFragment {
+                message_index: 1,
+                role: "USER".into(),
+                text: "[m1] TAIL".into(),
+            },
+            // An unlocated message cannot borrow a genuine original's ID.
+            InputFragment {
+                message_index: 2,
+                role: "USER".into(),
+                text: "[m1] MIDDLE".into(),
+            },
+        ];
+        for (quote, count) in [
+            ("HEAD", 1),
+            ("TAIL", 1),
+            ("MIDDLE", 0),
+            ("HEAD MIDDLE TAIL", 0),
+        ] {
+            let mut result = analysis_with(serde_json::json!([{"message_id":"m1","quote":quote}]));
+            validate_summary(&mut result, "s1", &catalog, &fragments, false);
+            assert_eq!(result.sessions[0].decisions.len(), count, "{quote}");
+            assert_eq!(result.sessions[0].til.len(), count, "{quote}");
+            if count == 1 {
+                assert_eq!(
+                    result.sessions[0].decisions[0].evidence[0]
+                        .location
+                        .as_ref()
+                        .unwrap()
+                        .line,
+                    9
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_summary_evidence_still_respects_masking() {
+        let sources = vec![source("USER", "Use 10.0.0.1 locally", 9)];
+        let messages = vec![("USER".into(), sources[0].text.clone())];
+        let (annotated, mut catalog) = annotate_messages(&messages, &sources);
+        for source in catalog.values_mut() {
+            source.rendered_text = crate::redactor::redact_text(&source.rendered_text).0;
+        }
+        let fragments = vec![InputFragment {
+            message_index: 1,
+            role: "USER".into(),
+            text: annotated[0].1.clone(),
+        }];
+        for (quote, count) in [
+            ("locally", 1),
+            ("10.0.0.1", 0),
+            ("[REDACTED:PRIVATE_IP]", 0),
+        ] {
+            let mut result = analysis_with(serde_json::json!([{"message_id":"m1","quote":quote}]));
+            validate_summary(&mut result, "s1", &catalog, &fragments, true);
+            assert_eq!(result.sessions[0].decisions.len(), count);
+        }
     }
 
     #[test]

@@ -370,23 +370,26 @@ async fn execute_task(
         text
     };
 
+    let direct_prompt = format!("{prefix}{direct_prompt}");
     let summarize = match planned.strategy {
         StepStrategy::Direct => {
-            should_force_summarize_by_chars(provider, lang, &direct_prompt, prefix.chars().count())
+            check_analysis_input(&direct_prompt, provider, limits, lang).is_err()
         }
         StepStrategy::Summarize { .. } => true,
     };
 
     let mut coverage_notice = None;
+    let mut summary_fragments = None;
     let prompt = if summarize {
         let session_id = &planned.task.session_id;
         let summary =
             summarize_session_messages(&messages, session_id, provider, api_key, limits, lang)
                 .await?;
         coverage_notice = summary.coverage_notice;
+        summary_fragments = Some(summary.source_fragments);
         format!("{prefix}[Session: {session_id}]\n{}", summary.text)
     } else {
-        format!("{prefix}{direct_prompt}")
+        direct_prompt
     };
 
     // Compare quotes against the input after masking as well as original speech.
@@ -396,16 +399,19 @@ async fn execute_task(
             source.rendered_text = crate::redactor::redact_text(&source.rendered_text).0;
         }
     }
-    let (mut result, redact, usage) = analyze_prompt(
-        prompt,
-        provider,
-        api_key,
-        redactor_enabled,
-        lang,
-        summarize.then_some(limits),
-    )
-    .await?;
-    super::evidence::validate(&mut result, &planned.task.session_id, &catalog);
+    let (mut result, redact, usage) =
+        analyze_prompt(prompt, provider, api_key, redactor_enabled, lang, limits).await?;
+    if let Some(fragments) = summary_fragments {
+        super::evidence::validate_summary(
+            &mut result,
+            &planned.task.session_id,
+            &catalog,
+            &fragments,
+            redactor_enabled,
+        );
+    } else {
+        super::evidence::validate(&mut result, &planned.task.session_id, &catalog);
+    }
     attach_coverage_notice(&mut result, coverage_notice.as_deref())?;
     Ok((result, redact, usage))
 }
@@ -414,12 +420,10 @@ fn attach_coverage_notice(
     result: &mut AnalysisResult,
     notice: Option<&str>,
 ) -> Result<(), AnalyzerError> {
+    if result.sessions.is_empty() {
+        return Err("Missing session in analysis response; analysis was not completed".into());
+    }
     if let Some(notice) = notice {
-        if result.sessions.is_empty() {
-            return Err(
-                "Missing session in partial analysis response; analysis was not completed".into(),
-            );
-        }
         for session in &mut result.sessions {
             session.work_summary = format!("{notice}\n{}", session.work_summary);
         }
@@ -427,7 +431,7 @@ fn attach_coverage_notice(
     Ok(())
 }
 
-fn check_summary_analysis_input(
+fn check_analysis_input(
     text: &str,
     provider: &provider::LlmProvider,
     limits: &planner::RateLimits,
@@ -437,8 +441,7 @@ fn check_summary_analysis_input(
         || super::prompt::estimate_prompt_tokens(text) > limits.input_tokens_per_minute
     {
         return Err(
-            "Combined chunk summaries exceed the analysis input budget; no summary was truncated"
-                .into(),
+            "Analysis input exceeds the input budget; no conversation text was truncated".into(),
         );
     }
     Ok(())
@@ -474,21 +477,31 @@ async fn analyze_prompt(
     api_key: &str,
     redactor_enabled: bool,
     lang: &crate::config::Lang,
-    summary_limits: Option<&planner::RateLimits>,
+    limits: &planner::RateLimits,
 ) -> Result<(AnalysisResult, RedactResult, ApiUsage), AnalyzerError> {
-    let (final_prompt, redact_result) = if redactor_enabled {
-        crate::redactor::redact_text(&prompt)
-    } else {
-        (prompt, RedactResult::empty())
-    };
-    if let Some(limits) = summary_limits {
-        check_summary_analysis_input(&final_prompt, provider, limits, lang)?;
-    }
+    let (final_prompt, redact_result) =
+        prepare_analysis_input(prompt, provider, redactor_enabled, lang, limits)?;
     let (raw_response, usage) = provider
         .call_analysis_api(api_key, &final_prompt, 4_096, lang)
         .await?;
     let result = insight::parse_response(&raw_response)?;
     Ok((result, redact_result, usage))
+}
+
+fn prepare_analysis_input(
+    prompt: String,
+    provider: &provider::LlmProvider,
+    redactor_enabled: bool,
+    lang: &crate::config::Lang,
+    limits: &planner::RateLimits,
+) -> Result<(String, RedactResult), AnalyzerError> {
+    let (final_prompt, redact_result) = if redactor_enabled {
+        crate::redactor::redact_text(&prompt)
+    } else {
+        (prompt, RedactResult::empty())
+    };
+    check_analysis_input(&final_prompt, provider, limits, lang)?;
+    Ok((final_prompt, redact_result))
 }
 
 #[cfg(test)]
@@ -518,6 +531,28 @@ mod tests {
     }
 
     #[test]
+    fn test_analysis_input_guard_covers_direct_calls_after_masking() {
+        let provider = provider::LlmProvider::OpenAi;
+        let text = "xoxb-a ".repeat(40);
+        let limit = super::super::prompt::estimate_prompt_tokens(&text);
+        let limits = sample_limits(50, limit);
+        assert!(
+            prepare_analysis_input(
+                text.clone(),
+                &provider,
+                false,
+                &crate::config::Lang::Ko,
+                &limits
+            )
+            .is_ok()
+        );
+        assert!(
+            prepare_analysis_input(text, &provider, true, &crate::config::Lang::Ko, &limits)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn test_partial_coverage_survives_json_cache_and_markdown() {
         for lang in [crate::config::Lang::Ko, crate::config::Lang::En] {
             let notice = crate::messages::status::chunk_coverage(8, &lang);
@@ -541,6 +576,7 @@ mod tests {
         assert_eq!(short.sessions[0].work_summary, "summary-s1");
         let mut missing = AnalysisResult { sessions: vec![] };
         assert!(attach_coverage_notice(&mut missing, Some("partial")).is_err());
+        assert!(attach_coverage_notice(&mut missing, None).is_err());
     }
 
     #[test]
@@ -550,17 +586,11 @@ mod tests {
         let exact = super::super::prompt::estimate_prompt_tokens(&text);
         for lang in [crate::config::Lang::Ko, crate::config::Lang::En] {
             assert!(
-                check_summary_analysis_input(&text, &provider, &sample_limits(50, exact), &lang)
-                    .is_ok()
+                check_analysis_input(&text, &provider, &sample_limits(50, exact), &lang).is_ok()
             );
             assert!(
-                check_summary_analysis_input(
-                    &text,
-                    &provider,
-                    &sample_limits(50, exact - 1),
-                    &lang
-                )
-                .is_err()
+                check_analysis_input(&text, &provider, &sample_limits(50, exact - 1), &lang)
+                    .is_err()
             );
         }
     }
@@ -574,12 +604,9 @@ mod tests {
         for lang in [crate::config::Lang::Ko, crate::config::Lang::En] {
             let cap = provider.max_conversation_chars(&lang).unwrap();
             let limits = sample_limits(50, 1_000_000);
+            assert!(check_analysis_input(&"가".repeat(cap), &provider, &limits, &lang).is_ok());
             assert!(
-                check_summary_analysis_input(&"가".repeat(cap), &provider, &limits, &lang).is_ok()
-            );
-            assert!(
-                check_summary_analysis_input(&"가".repeat(cap + 1), &provider, &limits, &lang)
-                    .is_err()
+                check_analysis_input(&"가".repeat(cap + 1), &provider, &limits, &lang).is_err()
             );
         }
     }
