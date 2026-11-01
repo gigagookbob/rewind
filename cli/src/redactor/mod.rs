@@ -40,26 +40,50 @@ impl RedactResult {
 /// Detects sensitive data in text and replaces with [REDACTED:TYPE].
 /// Rules are applied in order — earlier replacements must not match later patterns.
 pub fn redact_text(text: &str) -> (String, RedactResult) {
+    let (mut parts, result) = redact_parts(&[text]);
+    (parts.remove(0), result)
+}
+
+/// Scan before inserting role/ID/chunk headers. A match crossing a part boundary
+/// is masked in every affected part, but counted only once. Concatenating with
+/// no separator deliberately prefers over-masking to exposing split secrets.
+pub fn redact_parts(parts: &[&str]) -> (Vec<String>, RedactResult) {
     let rules = patterns::builtin_rules();
-    let mut result_text = text.to_string();
+    let mut result_parts: Vec<String> = parts.iter().map(|s| s.to_string()).collect();
     let mut by_type: BTreeMap<String, usize> = BTreeMap::new();
     let mut total_count: usize = 0;
 
     for rule in rules {
-        let count = rule.pattern.find_iter(&result_text).count();
+        let joined = result_parts.concat();
+        let matches: Vec<_> = rule.pattern.find_iter(&joined).collect();
+        let count = matches.len();
         if count > 0 {
             let replacement = format!("[REDACTED:{}]", rule.name);
-            result_text = rule
-                .pattern
-                .replace_all(&result_text, replacement.as_str())
-                .into_owned();
+            let mut offset = 0;
+            for part in &mut result_parts {
+                let end = offset + part.len();
+                let mut masked = String::new();
+                let mut cursor = offset;
+                for found in &matches {
+                    let start = found.start().max(offset);
+                    let stop = found.end().min(end);
+                    if start < stop {
+                        masked.push_str(&joined[cursor..start]);
+                        masked.push_str(&replacement);
+                        cursor = stop;
+                    }
+                }
+                masked.push_str(&joined[cursor..end]);
+                *part = masked;
+                offset = end;
+            }
             *by_type.entry(rule.name.to_string()).or_insert(0) += count;
             total_count += count;
         }
     }
 
     (
-        result_text,
+        result_parts,
         RedactResult {
             total_count,
             by_type,
@@ -70,6 +94,59 @@ pub fn redact_text(text: &str) -> (String, RedactResult) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_split_secrets_mask_every_part_and_count_once() {
+        for secret in [
+            format!("sk-proj-{}", "x".repeat(80)),
+            "-----BEGIN RSA PRIVATE KEY-----\nSYNTHETIC_BODY\n-----END RSA PRIVATE KEY-----".into(),
+        ] {
+            for split in 1..secret.len() {
+                let parts = [&secret[..split], &secret[split..]];
+                let (masked, count) = redact_parts(&parts);
+                assert!(masked.iter().all(|s| s.starts_with("[REDACTED:")));
+                assert_eq!(count.total_count, 1);
+                let refs: Vec<_> = masked.iter().map(String::as_str).collect();
+                let (twice, again) = redact_parts(&refs);
+                assert_eq!(twice, masked);
+                assert_eq!(again.total_count, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_overlapping_secret_rules_count_one_value() {
+        let (_, count) = redact_text(&format!("api_key = \"sk-proj-{}\"", "x".repeat(40)));
+        assert_eq!(count.total_count, 1);
+        assert_eq!(count.by_type["ENV_SECRET"], 1);
+    }
+
+    #[test]
+    fn test_prefixed_api_keys_are_fully_masked() {
+        for prefix in ["sk-proj-", "sk-ant-", "sk-"] {
+            let secret = format!("{prefix}{}-tail_value", "a".repeat(40));
+            let (masked, count) = redact_text(&secret);
+            assert_eq!(masked, "[REDACTED:API_KEY]");
+            assert_eq!(count.total_count, 1);
+        }
+    }
+
+    #[test]
+    fn test_private_key_body_and_unclosed_tail_are_masked() {
+        for kind in ["", "RSA ", "EC ", "OPENSSH "] {
+            let begin = format!("-----BEGIN {kind}PRIVATE KEY-----");
+            let end = format!("-----END {kind}PRIVATE KEY-----");
+            for input in [
+                format!("before\n{begin}\nSYNTHETIC_PRIVATE_BODY\n{end}\nafter"),
+                format!("before\n{begin}\nSYNTHETIC_PRIVATE_BODY"),
+            ] {
+                let (masked, count) = redact_text(&input);
+                assert!(!masked.contains("SYNTHETIC_PRIVATE_BODY"));
+                assert!(masked.starts_with("before\n[REDACTED:PRIVATE_KEY]"));
+                assert_eq!(count.total_count, 1);
+            }
+        }
+    }
 
     #[test]
     fn test_api_key_masking() {

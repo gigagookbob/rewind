@@ -22,7 +22,7 @@ pub struct RedactorRule {
 /// Returns the list of built-in redaction rules.
 pub fn builtin_rules() -> Vec<RedactorRule> {
     static API_KEY: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\bsk-[a-zA-Z0-9]{20,}\b").expect("API_KEY regex"));
+        LazyLock::new(|| Regex::new(r"\bsk-[a-zA-Z0-9_-]{20,}\b").expect("API_KEY regex"));
     static AWS_KEY: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\bAKIA[0-9A-Z]{16}\b").expect("AWS_KEY regex"));
     static GITHUB_TOKEN: LazyLock<Regex> =
@@ -41,10 +41,30 @@ pub fn builtin_rules() -> Vec<RedactorRule> {
             .expect("PRIVATE_IP regex")
     });
     static PRIVATE_KEY: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"-----BEGIN[A-Z ]*PRIVATE KEY-----").expect("PRIVATE_KEY regex")
+        // An incomplete block consumes the remaining input rather than exposing
+        // a body whose END marker was omitted by the source log.
+        Regex::new(
+            r"(?s)-----BEGIN[A-Z ]*PRIVATE KEY-----.*?(?:-----END[A-Z ]*PRIVATE KEY-----|\z)",
+        )
+        .expect("PRIVATE_KEY regex")
     });
 
     vec![
+        RedactorRule {
+            name: "PRIVATE_KEY",
+            kind: PatternKind::Regex,
+            pattern: &PRIVATE_KEY,
+        },
+        RedactorRule {
+            name: "ENV_SECRET",
+            kind: PatternKind::Regex,
+            pattern: &ENV_SECRET,
+        },
+        RedactorRule {
+            name: "BEARER_TOKEN",
+            kind: PatternKind::Regex,
+            pattern: &BEARER_TOKEN,
+        },
         RedactorRule {
             name: "API_KEY",
             kind: PatternKind::FixedPrefix,
@@ -66,24 +86,9 @@ pub fn builtin_rules() -> Vec<RedactorRule> {
             pattern: &SLACK_TOKEN,
         },
         RedactorRule {
-            name: "BEARER_TOKEN",
-            kind: PatternKind::Regex,
-            pattern: &BEARER_TOKEN,
-        },
-        RedactorRule {
-            name: "ENV_SECRET",
-            kind: PatternKind::Regex,
-            pattern: &ENV_SECRET,
-        },
-        RedactorRule {
             name: "PRIVATE_IP",
             kind: PatternKind::Regex,
             pattern: &PRIVATE_IP,
-        },
-        RedactorRule {
-            name: "PRIVATE_KEY",
-            kind: PatternKind::Regex,
-            pattern: &PRIVATE_KEY,
         },
     ]
 }
