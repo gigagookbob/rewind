@@ -70,7 +70,7 @@ pub(crate) async fn run_today(
             for (name, analysis) in &source_refs {
                 print_insights(name, analysis);
             }
-            save_combined_analysis(&source_refs, today, verbose);
+            save_combined_analysis(&source_refs, today, verbose)?;
             return Ok(());
         }
 
@@ -140,7 +140,7 @@ pub(crate) async fn run_today(
         for (name, analysis) in &source_refs {
             print_insights(name, analysis);
         }
-        save_combined_analysis(&source_refs, today, verbose);
+        save_combined_analysis(&source_refs, today, verbose)?;
 
         // Save analysis results to cache.
         let cache_data = cache::TodayCache {
@@ -281,35 +281,28 @@ fn save_combined_analysis(
     sources: &[(&str, &analyzer::AnalysisResult)],
     date: chrono::NaiveDate,
     verbose: bool,
-) {
-    let vault_path = match output::load_vault_path() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{}", crate::messages::error::vault_path_load_failed(&e));
-            return;
-        }
-    };
+) -> Result<(), output::OutputError> {
+    let vault_path = output::load_vault_path()
+        .map_err(|e| crate::messages::error::vault_path_load_failed(&e))?;
 
     let markdown = output::render_combined_markdown(sources, date);
 
-    match output::save_to_vault(&vault_path, date, &markdown) {
-        Ok(saved) => {
-            println!(
-                "\n{}",
-                crate::messages::status::markdown_saved(&saved.display())
-            );
-            if verbose && let Ok(meta) = std::fs::metadata(&saved) {
-                eprintln!(
-                    "{}",
-                    crate::messages::verbose::markdown_file_size(
-                        &saved.display(),
-                        meta.len() as f64 / 1024.0,
-                    )
-                );
-            }
-        }
-        Err(e) => eprintln!("{}", crate::messages::error::file_save_failed(&e)),
+    let saved = output::save_to_vault(&vault_path, date, &markdown)
+        .map_err(|e| crate::messages::error::file_save_failed(&e))?;
+    println!(
+        "\n{}",
+        crate::messages::status::markdown_saved(&saved.display())
+    );
+    if verbose && let Ok(meta) = std::fs::metadata(&saved) {
+        eprintln!(
+            "{}",
+            crate::messages::verbose::markdown_file_size(
+                &saved.display(),
+                meta.len() as f64 / 1024.0,
+            )
+        );
     }
+    Ok(())
 }
 
 #[cfg(test)]

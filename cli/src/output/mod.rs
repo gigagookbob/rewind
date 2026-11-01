@@ -36,6 +36,19 @@ pub fn save_to_vault(
     vault::save(vault_path, date, managed::Section::Analysis, content)
 }
 
+/// Uses the same transaction as analysis, without claiming a user's heading.
+pub fn save_summary_to_vault(
+    vault_path: &Path,
+    date: NaiveDate,
+    summary: &str,
+) -> Result<PathBuf, OutputError> {
+    let body = format!(
+        "{}\n\n{summary}\n",
+        crate::messages::markdown::PROGRESS_SECTION_HEADER
+    );
+    vault::save(vault_path, date, managed::Section::Summary, &body)
+}
+
 /// Shared evidence text. Strip control characters before printing to a terminal.
 pub fn display_evidence(evidence: &[Evidence]) -> String {
     let mut output = String::new();
@@ -138,6 +151,53 @@ mod tests {
         assert!(saved.starts_with(note));
         assert!(saved.contains("Reanalysis"));
         assert!(!saved.contains("New analysis"));
+    }
+
+    #[test]
+    fn test_analysis_summary_order_and_cached_resave_preserve_user_content() {
+        let date = NaiveDate::from_ymd_opt(2099, 1, 2).unwrap();
+        let analysis = crate::analyzer::AnalysisResult { sessions: vec![] };
+        let markdown = render_combined_markdown(&[("Synthetic", &analysis)], date);
+        for summary_first in [true, false] {
+            let dir = std::env::temp_dir()
+                .join(format!("rwd_order_{}_{summary_first}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join(format!("{date}.md"));
+            let note = "---\ntitle: Mine\n---\n# My title\n\n## Development Progress\nHuman summary\n\n```md\n## Development Progress\nExample\n```\n";
+            std::fs::write(&path, note).unwrap();
+            if summary_first {
+                save_summary_to_vault(&dir, date, "first progress").unwrap();
+            }
+            save_to_vault(&dir, date, &markdown).unwrap();
+            save_summary_to_vault(&dir, date, "latest progress").unwrap();
+            let with_memo = format!(
+                "{}\n## My memo\nKeep this\n",
+                std::fs::read_to_string(&path).unwrap()
+            );
+            std::fs::write(&path, &with_memo).unwrap();
+            // Cached rendering and a refreshed analysis use the identical save boundary.
+            save_to_vault(&dir, date, &markdown).unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), with_memo);
+            save_to_vault(&dir, date, "refreshed analysis").unwrap();
+            save_summary_to_vault(&dir, date, "latest progress").unwrap();
+            let saved = std::fs::read_to_string(&path).unwrap();
+            assert!(saved.starts_with(note));
+            assert!(saved.ends_with("\n## My memo\nKeep this\n"));
+            assert_eq!(saved.matches("latest progress").count(), 1);
+            assert_eq!(saved.matches("refreshed analysis").count(), 1);
+            assert!(!saved.contains("first progress"));
+            assert_eq!(saved.matches("<!-- rwd:analysis:v1:").count(), 1);
+            assert_eq!(saved.matches("<!-- rwd:summary:v1:").count(), 1);
+            // Editing either managed region must stop both writers without mutation.
+            for text in ["latest progress", "refreshed analysis"] {
+                let manual = saved.replace(text, "human addition");
+                std::fs::write(&path, &manual).unwrap();
+                assert!(save_summary_to_vault(&dir, date, "new").is_err());
+                assert!(save_to_vault(&dir, date, "new").is_err());
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), manual);
+            }
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     #[test]

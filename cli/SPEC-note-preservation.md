@@ -18,6 +18,8 @@
 
 Rust 2024, 기존 의존성과 표준 라이브러리만 사용합니다. 저장 정책과 파일 처리는 `src/output/`에 두고 명령은 결과를 전달합니다. `Result`와 `?`로 오류를 호출자에 전달합니다.
 
+`File::try_lock`은 즉시 배타 잠금을 시도하고 실패하면 오류를 돌려줍니다. 잠금용 `File`이 함수 끝에서 해제되면 운영체제 잠금도 풀립니다. 임시 경로를 감싼 `PendingFile`의 `Drop`은 성공과 오류 반환 모두에서 임시 파일 정리를 시도합니다. `AtomicU64`는 같은 프로세스의 여러 호출이 임시 파일 일련번호를 겹쳐 쓰지 않게 합니다. 실제 파일 생성도 `create_new`로 수행하므로 이미 있던 파일은 덮어쓰지 않습니다. 별도 데이터베이스나 새 크레이트 대신 표준 라이브러리를 선택한 이유입니다. API는 Context7의 [Rust 표준 라이브러리 문서](https://doc.rust-lang.org/stable/std/fs/struct.File.html)에서 확인했습니다.
+
 ```rust
 let saved = output::save_to_vault(&vault_path, date, &markdown)?;
 ```

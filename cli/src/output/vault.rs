@@ -49,7 +49,13 @@ fn read_note(path: &Path) -> Result<Option<String>, OutputError> {
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
     }
-    Ok(Some(fs::read_to_string(path)?))
+    Ok(Some(fs::read_to_string(path).map_err(|e| {
+        format!(
+            "{}: {}",
+            path.display(),
+            crate::messages::error::file_read_failed(&e)
+        )
+    })?))
 }
 
 struct PendingFile(PathBuf);
@@ -82,10 +88,18 @@ fn replace(path: &Path, original: Option<&str>, updated: &str) -> Result<(), Out
     }
     file.write_all(updated.as_bytes())?;
     file.sync_all()?;
-    if read_note(path)?.as_deref() != original {
+    commit_file(&temp.0, path, original)
+}
+
+fn commit_file(temp: &Path, path: &Path, original: Option<&str>) -> Result<(), OutputError> {
+    let current = read_note(path)?;
+    if original.is_some() && current.is_none() {
+        return Err(crate::messages::error::daily_markdown_not_found(&path.display()).into());
+    }
+    if current.as_deref() != original {
         return Err("저장 중 일일 노트가 변경되어 교체하지 않았습니다".into());
     }
-    fs::rename(&temp.0, path)?;
+    fs::rename(temp, path)?;
     Ok(())
 }
 
@@ -133,6 +147,12 @@ mod tests {
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
         assert!(replace(&path, None, "new").is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), "external edit");
+        assert!(commit_file(&dir.join("missing.tmp"), &path, Some("external edit")).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "external edit");
+        fs::remove_file(&path).unwrap();
+        assert!(replace(&path, Some("deleted original"), "new").is_err());
+        assert!(!path.exists());
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -144,6 +164,50 @@ mod tests {
         let date = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
         assert!(save(&not_directory, date, managed::Section::Analysis, "new").is_err());
         assert_eq!(fs::read_to_string(&not_directory).unwrap(), "preserve");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_summary_can_create_note_and_both_regions_remain_unique() {
+        let dir = directory();
+        let date = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
+        let path = save(&dir, date, managed::Section::Summary, "progress").unwrap();
+        for _ in 0..3 {
+            save(&dir, date, managed::Section::Analysis, "analysis").unwrap();
+            save(&dir, date, managed::Section::Summary, "progress").unwrap();
+        }
+        let saved = fs::read_to_string(path).unwrap();
+        assert_eq!(saved.matches("<!-- rwd:analysis:v1:").count(), 1);
+        assert_eq!(saved.matches("<!-- rwd:summary:v1:").count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_symlink_is_rejected_and_file_permissions_are_preserved() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let dir = directory();
+        let original = dir.join("original.md");
+        let date = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
+        let path = dir.join(format!("{date}.md"));
+        fs::write(&original, "keep").unwrap();
+        symlink(&original, &path).unwrap();
+        assert!(save(&dir, date, managed::Section::Analysis, "new").is_err());
+        assert_eq!(fs::read_to_string(&original).unwrap(), "keep");
+        assert!(
+            fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        fs::remove_file(&path).unwrap();
+        fs::write(&path, "user note").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        save(&dir, date, managed::Section::Analysis, "new").unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 }

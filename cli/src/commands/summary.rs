@@ -107,7 +107,7 @@ pub(crate) async fn run_summary(
     println!("{summary}");
 
     // Append summary section to daily Markdown file.
-    append_summary_to_markdown(today, &summary);
+    append_summary_to_markdown(today, &summary)?;
 
     copy_to_clipboard(&summary);
     println!("\n{}", crate::messages::status::COPIED_TO_CLIPBOARD);
@@ -194,63 +194,18 @@ fn copy_to_clipboard(text: &str) {
     }
 }
 
-/// Overwrites or appends the progress section in the daily Markdown file.
-///
-/// If the section already exists, replaces it in-place. Otherwise appends at the end.
-/// Section range: from the header to the next `## ` header (or EOF).
-fn append_summary_to_markdown(date: chrono::NaiveDate, summary: &str) {
-    let vault_path = match output::load_vault_path() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{}", crate::messages::error::vault_path_load_failed(&e));
-            return;
-        }
-    };
-
-    let file_path = vault_path.join(format!("{date}.md"));
-    if !file_path.exists() {
-        eprintln!(
-            "{}",
-            crate::messages::error::daily_markdown_not_found(&file_path.display())
-        );
-        return;
-    }
-
-    let existing = match std::fs::read_to_string(&file_path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("{}", crate::messages::error::file_read_failed(&e));
-            return;
-        }
-    };
-
-    let section_header = crate::messages::markdown::PROGRESS_SECTION_HEADER;
-    let new_section = format!("{section_header}\n\n{summary}\n");
-
-    // Replace existing section, or append at the end.
-    let updated = if let Some(start) = existing.find(section_header) {
-        // Find the end: start of the next `## ` header, or EOF.
-        let after_header = start + section_header.len();
-        let end = existing[after_header..]
-            .find("\n## ")
-            .map(|pos| after_header + pos + 1)
-            .unwrap_or(existing.len());
-
-        format!(
-            "{}{}\n{}",
-            &existing[..start],
-            new_section,
-            &existing[end..]
-        )
-    } else {
-        format!("{}\n{}\n", existing.trim_end(), new_section)
-    };
-
-    match std::fs::write(&file_path, updated) {
-        Ok(()) => println!(
-            "{}",
-            crate::messages::status::markdown_saved(&file_path.display())
-        ),
-        Err(e) => eprintln!("{}", crate::messages::error::file_save_failed(&e)),
-    }
+/// Updates only the unchanged rwd summary region, preserving user headings.
+fn append_summary_to_markdown(
+    date: chrono::NaiveDate,
+    summary: &str,
+) -> Result<(), output::OutputError> {
+    let vault_path = output::load_vault_path()
+        .map_err(|e| crate::messages::error::vault_path_load_failed(&e))?;
+    let saved = output::save_summary_to_vault(&vault_path, date, summary)
+        .map_err(|e| crate::messages::error::file_save_failed(&e))?;
+    println!(
+        "{}",
+        crate::messages::status::markdown_saved(&saved.display())
+    );
+    Ok(())
 }
