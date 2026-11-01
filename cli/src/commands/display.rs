@@ -276,18 +276,25 @@ fn unicode_display_width(s: &str) -> usize {
     s.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum()
 }
 
-/// Prints analysis results in a full-box style per source.
+/// Prints projects across sources, with each full session ID and source retained.
 pub(super) fn print_insights(sources: &[(&str, &analyzer::AnalysisResult)]) {
     let term_w = terminal_width();
     println!("\n  {}", crate::messages::display::ATTRIBUTION_NOTE);
+    println!("  {}", crate::output::retrospective::NOTE);
     for (project, sessions) in crate::output::project_groups(sources) {
         let label = crate::output::plain(&crate::output::project_label(project.as_ref()));
         println!("\n{CYAN}  ┌─ Project: {label}{RESET}");
         for (source_name, session) in sessions {
             println!("\n  Source: {}", crate::output::plain(source_name));
-            // Show only the first 8 chars of session ID for readability
             let id_short = crate::output::plain(&session.session_id);
-            println!("\n{BRIGHT_BLUE}  ▸ Session: {id_short}{RESET}");
+            println!(
+                "\n{BRIGHT_BLUE}  ▸ {}{RESET}",
+                crate::output::plain(crate::output::retrospective::title(session))
+            );
+            println!("  Session: {id_short}");
+            for line in crate::output::retrospective::lines(session) {
+                println!("  {line}");
+            }
             println!(
                 "{}",
                 crate::messages::display::summary_line(&session.work_summary)
@@ -302,16 +309,6 @@ pub(super) fn print_insights(sources: &[(&str, &analyzer::AnalysisResult)]) {
                     println!("  • {}", d.what);
                     println!("    {DIM}→ {}{RESET}", d.why);
                     print!("{}", crate::output::display_evidence(&d.evidence));
-                }
-            }
-
-            if !session.curiosities.is_empty() {
-                println!(
-                    "\n  {YELLOW}{}{RESET}",
-                    crate::messages::display::CURIOSITIES_LABEL
-                );
-                for c in &session.curiosities {
-                    println!("  • {c}");
                 }
             }
 

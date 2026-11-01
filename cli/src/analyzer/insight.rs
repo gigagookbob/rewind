@@ -44,6 +44,12 @@ pub struct SessionInsight {
     /// Set from local log metadata, never accepted from model output.
     #[serde(default)]
     pub project: Option<super::retrospective::Project>,
+    #[serde(default)]
+    pub task_title: Option<super::retrospective::TaskTitle>,
+    #[serde(default)]
+    pub questions: Vec<super::retrospective::Question>,
+    #[serde(default)]
+    pub follow_ups: Vec<super::retrospective::FollowUp>,
     pub session_id: String,
     #[serde(deserialize_with = "string_or_stringify")]
     pub work_summary: String,
@@ -230,6 +236,9 @@ mod tests {
         let r1 = AnalysisResult {
             sessions: vec![SessionInsight {
                 project: None,
+                task_title: None,
+                questions: vec![],
+                follow_ups: vec![],
                 session_id: "s1".to_string(),
                 work_summary: "작업1".to_string(),
                 decisions: vec![],
@@ -241,6 +250,9 @@ mod tests {
         let r2 = AnalysisResult {
             sessions: vec![SessionInsight {
                 project: None,
+                task_title: None,
+                questions: vec![],
+                follow_ups: vec![],
                 session_id: "s2".to_string(),
                 work_summary: "작업2".to_string(),
                 decisions: vec![],

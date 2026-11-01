@@ -234,6 +234,7 @@ pub fn validate(
         .sessions
         .retain(|session| session.session_id == session_id);
     for session in &mut result.sessions {
+        super::retrospective_validation::validate(session, catalog, false);
         session.decisions.retain_mut(|item| {
             resolve(&mut item.evidence, catalog) && has_target_user(&item.evidence)
         });
@@ -284,6 +285,7 @@ pub fn validate_summary(
         })
     };
     for session in &mut result.sessions {
+        super::retrospective_validation::retain_supported(session, supported);
         session.decisions.retain(|item| supported(&item.evidence));
         session.til.retain(|item| supported(&item.evidence));
         session.corrections.retain(|item| supported(&item.evidence));
@@ -315,7 +317,7 @@ fn correction_order_matches(
     matches!((latest_model, first_user), (Some(model), Some(user)) if model < user)
 }
 
-fn resolve(evidence: &mut [Evidence], catalog: &HashMap<String, SourceMessage>) -> bool {
+pub(super) fn resolve(evidence: &mut [Evidence], catalog: &HashMap<String, SourceMessage>) -> bool {
     if evidence.is_empty() {
         return false;
     }
@@ -353,6 +355,7 @@ pub fn revalidate_cached_session(
     redactor_enabled: bool,
 ) {
     let (_, catalog, _) = annotate_protected_messages(messages, sources, redactor_enabled);
+    super::retrospective_validation::validate(session, &catalog, true);
     for evidence in session
         .decisions
         .iter_mut()
@@ -374,7 +377,7 @@ pub fn revalidate_cached_session(
     }
 }
 
-fn cached_evidence_matches(
+pub(super) fn cached_evidence_matches(
     evidence: &[Evidence],
     catalog: &HashMap<String, SourceMessage>,
 ) -> bool {

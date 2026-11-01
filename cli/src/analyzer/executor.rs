@@ -472,6 +472,9 @@ mod tests {
         AnalysisResult {
             sessions: vec![insight::SessionInsight {
                 project: None,
+                task_title: None,
+                questions: vec![],
+                follow_ups: vec![],
                 session_id: session_id.to_string(),
                 work_summary: format!("summary-{session_id}"),
                 decisions: vec![],

@@ -12,6 +12,9 @@ pub mod planner;
 pub mod prompt;
 pub mod provider;
 pub mod retrospective;
+#[cfg(test)]
+mod retrospective_tests;
+mod retrospective_validation;
 pub mod summarizer;
 
 // TODO: Replace with a dedicated error type via thiserror.

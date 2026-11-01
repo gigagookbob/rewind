@@ -62,7 +62,7 @@ pub(crate) async fn run_today(
 
         if count_matches && timezone_matches {
             println!("\n{}", crate::messages::status::CACHE_USED);
-            let cached_sources = prepare_cached_sources(cached, &run, redactor_enabled);
+            let cached_sources = prepare_cached_sources(&cached, &run, redactor_enabled);
             let source_refs: Vec<(&str, &analyzer::AnalysisResult)> = cached_sources
                 .iter()
                 .map(|(name, result)| (name.as_str(), result))
@@ -169,12 +169,12 @@ pub(crate) async fn run_today(
     Ok(())
 }
 
-fn prepare_cached_sources(
-    cached: cache::TodayCache,
+pub(super) fn prepare_cached_sources(
+    cached: &cache::TodayCache,
     run: &CollectionRun,
     redactor_enabled: bool,
 ) -> Vec<(String, analyzer::AnalysisResult)> {
-    let mut results = cached.sources;
+    let mut results = cached.sources.clone();
     for (name, analysis) in &mut results {
         let current = run
             .sources
@@ -384,8 +384,11 @@ mod tests {
             sources: vec![("Claude Code".into(), analysis)],
         };
         let saved_cache = serde_json::to_string(&cached).unwrap();
-        let unchanged =
-            prepare_cached_sources(serde_json::from_str(&saved_cache).unwrap(), &original, true);
+        let unchanged = prepare_cached_sources(
+            &serde_json::from_str(&saved_cache).unwrap(),
+            &original,
+            true,
+        );
         assert!(
             unchanged[0].1.sessions[0].decisions[0].evidence[0]
                 .location
@@ -398,7 +401,7 @@ mod tests {
                 original.sources[0].collection.sessions[0].task.session_id = "other".into();
             }
             let prepared = prepare_cached_sources(
-                serde_json::from_str(&saved_cache).unwrap(),
+                &serde_json::from_str(&saved_cache).unwrap(),
                 &original,
                 false,
             );
@@ -420,7 +423,7 @@ mod tests {
             &current.fingerprint_table()
         ));
         assert!(cache::is_timezone_compatible(&cached, date));
-        let prepared = prepare_cached_sources(cached, &current, true);
+        let prepared = prepare_cached_sources(&cached, &current, true);
         let session = &prepared[0].1.sessions[0];
         assert_eq!(session.decisions[0].what, "Use a function");
         assert!(session.decisions[0].evidence[0].location.is_none());

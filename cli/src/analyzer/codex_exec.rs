@@ -79,10 +79,13 @@ const ANALYSIS_OUTPUT_SCHEMA: &str = r##"{
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["session_id", "work_summary", "decisions", "curiosities", "corrections", "til"],
+        "required": ["session_id", "work_summary", "decisions", "curiosities", "corrections", "til", "task_title", "questions", "follow_ups"],
         "properties": {
           "session_id": { "type": "string" },
           "work_summary": { "type": "string" },
+          "task_title": {"type": ["object", "null"], "additionalProperties": false, "required": ["text", "evidence"], "properties": {"text": {"type": "string"}, "evidence": {"$ref": "#/$defs/evidence"}}},
+          "questions": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["question", "evidence", "updates"], "properties": {"question": {"type": "string"}, "evidence": {"$ref": "#/$defs/evidence"}, "updates": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["kind", "detail", "evidence"], "properties": {"kind": {"type": "string", "enum": ["answer", "resolved", "open", "unknown"]}, "detail": {"type": "string"}, "evidence": {"$ref": "#/$defs/evidence"}}}}}}},
+          "follow_ups": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["task", "origin", "evidence", "updates"], "properties": {"task": {"type": "string"}, "origin": {"type": "string", "enum": ["user_request", "ai_suggestion", "unknown"]}, "evidence": {"$ref": "#/$defs/evidence"}, "updates": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["kind", "detail", "evidence"], "properties": {"kind": {"type": "string", "enum": ["accepted", "completed", "withdrawn", "unknown"]}, "detail": {"type": "string"}, "evidence": {"$ref": "#/$defs/evidence"}}}}}}},
           "decisions": {
             "type": "array",
             "items": {

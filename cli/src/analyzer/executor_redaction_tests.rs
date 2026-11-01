@@ -194,11 +194,13 @@ async fn test_long_session_masks_before_splitting_and_rechecks_derived_final_inp
         Ok(serde_json::to_string(&sample_analysis("s1")).unwrap()),
     ];
     let (provider, recorded) = fake_provider(provider::ProviderKind::OpenAi, true, responses);
+    let input_budget =
+        super::super::prompt::estimate_tokens(include_str!("../../prompts/system_ko.md")) + 1_000;
     let result = run_planned_task(
         task,
         &provider,
         "auth",
-        &sample_limits(1_000, 2_000),
+        &sample_limits(1_000, input_budget),
         &crate::config::Lang::Ko,
     )
     .await
@@ -211,7 +213,9 @@ async fn test_long_session_masks_before_splitting_and_rechecks_derived_final_inp
         let value: serde_json::Value = serde_json::from_str(payload).unwrap();
         let system = value["messages"][0]["content"].as_str().unwrap();
         let text = value["messages"][1]["content"].as_str().unwrap();
-        assert!(super::super::prompt::estimate_tokens(&format!("{system}\n{text}")) <= 2_000);
+        assert!(
+            super::super::prompt::estimate_tokens(&format!("{system}\n{text}")) <= input_budget
+        );
     }
     assert_eq!(result.redact.total_count, 1);
     assert!(payloads[0].contains("[REDACTED:API_KEY]"));

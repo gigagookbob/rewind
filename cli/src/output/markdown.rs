@@ -7,15 +7,16 @@ use chrono::NaiveDate;
 use crate::analyzer::insight::{AnalysisResult, Evidence, SessionInsight, TilItem};
 
 /// Combines analysis results from multiple sources into a single Markdown document.
-/// Each source is separated by a ## heading.
+/// Projects group sessions across sources; each session retains its source.
 ///
 /// sources: slice of (source name, analysis result) tuples.
 pub fn render_combined_markdown(sources: &[(&str, &AnalysisResult)], date: NaiveDate) -> String {
     let mut md = String::new();
     md.push_str(&format!("# {date} Dev Session Review\n\n"));
     md.push_str(&format!(
-        "{}\n\n",
-        crate::messages::display::ATTRIBUTION_NOTE
+        "{}\n\n{}\n\n",
+        crate::messages::display::ATTRIBUTION_NOTE,
+        super::retrospective::NOTE
     ));
 
     let mut all_til_items: Vec<(&str, &TilItem)> = Vec::new();
@@ -47,8 +48,9 @@ pub fn render_markdown(analysis: &AnalysisResult, date: NaiveDate) -> String {
 
     md.push_str(&format!("# {date} Dev Session Review\n\n"));
     md.push_str(&format!(
-        "{}\n\n",
-        crate::messages::display::ATTRIBUTION_NOTE
+        "{}\n\n{}\n\n",
+        crate::messages::display::ATTRIBUTION_NOTE,
+        super::retrospective::NOTE
     ));
 
     let mut til_items: Vec<(&str, &TilItem)> = Vec::new();
@@ -69,19 +71,25 @@ pub fn render_markdown(analysis: &AnalysisResult, date: NaiveDate) -> String {
 /// TIL items are collected separately and not rendered here.
 fn render_session(md: &mut String, session: &SessionInsight) {
     md.push_str(&format!(
-        "### Session: {}\n\n",
+        "### {}\n\nSession: {}\n\n",
+        super::escape_markdown(super::retrospective::title(session)),
         super::escape_markdown(&session.session_id)
     ));
     md.push_str(&format!(
         "{}\n{}\n\n",
-        crate::messages::markdown::WORK_SUMMARY_HEADER,
+        crate::messages::markdown::WORK_SUMMARY_HEADER.replacen("###", "####", 1),
         session.work_summary
     ));
+
+    for line in super::retrospective::lines(session) {
+        md.push_str(&format!("> {}  \n", super::escape_markdown(&line)));
+    }
+    md.push('\n');
 
     if !session.decisions.is_empty() {
         md.push_str(&format!(
             "{}\n",
-            crate::messages::markdown::DECISIONS_HEADER
+            crate::messages::markdown::DECISIONS_HEADER.replacen("###", "####", 1)
         ));
         for d in &session.decisions {
             md.push_str(&format!("- **{}**: {}\n", d.what, d.why));
@@ -90,21 +98,10 @@ fn render_session(md: &mut String, session: &SessionInsight) {
         md.push('\n');
     }
 
-    if !session.curiosities.is_empty() {
-        md.push_str(&format!(
-            "{}\n",
-            crate::messages::markdown::CURIOSITIES_HEADER
-        ));
-        for c in &session.curiosities {
-            md.push_str(&format!("- {c}\n"));
-        }
-        md.push('\n');
-    }
-
     if !session.corrections.is_empty() {
         md.push_str(&format!(
             "{}\n",
-            crate::messages::markdown::CORRECTIONS_HEADER
+            crate::messages::markdown::CORRECTIONS_HEADER.replacen("###", "####", 1)
         ));
         for c in &session.corrections {
             md.push_str(&format!("- {}\n", c.kind.label()));
@@ -136,7 +133,10 @@ fn render_til_section(md: &mut String, til_items: &[(&str, &TilItem)]) {
         md.push_str(&format!("{}\n", til.detail));
         render_evidence(md, &til.evidence);
         // Session ID as HTML comment -- invisible in rendered Markdown but traceable.
-        md.push_str(&format!("<!-- session: {} -->\n\n", session_id));
+        md.push_str(&format!(
+            "<!-- session: {} -->\n\n",
+            super::escape_markdown(session_id)
+        ));
     }
 }
 
@@ -194,6 +194,9 @@ mod tests {
         AnalysisResult {
             sessions: vec![SessionInsight {
                 project: None,
+                task_title: None,
+                questions: vec![],
+                follow_ups: vec![],
                 session_id: "test-session-1".to_string(),
                 work_summary: "파서 모듈 구현".to_string(),
                 decisions: vec![Decision {
@@ -222,7 +225,7 @@ mod tests {
         let md = render_markdown(&analysis, test_date());
 
         assert!(md.contains("# 2026-03-11 Dev Session Review"));
-        assert!(md.contains("## Session: test-session-1"));
+        assert!(md.contains("Session: test-session-1"));
         assert!(md.contains("### Work Summary\n파서 모듈 구현"));
     }
 
@@ -240,6 +243,9 @@ mod tests {
         let analysis = AnalysisResult {
             sessions: vec![SessionInsight {
                 project: None,
+                task_title: None,
+                questions: vec![],
+                follow_ups: vec![],
                 session_id: "s1".to_string(),
                 work_summary: "요약".to_string(),
                 decisions: vec![],
@@ -258,6 +264,9 @@ mod tests {
         let claude = AnalysisResult {
             sessions: vec![SessionInsight {
                 project: None,
+                task_title: None,
+                questions: vec![],
+                follow_ups: vec![],
                 session_id: "c1".to_string(),
                 work_summary: "Claude 작업".to_string(),
                 decisions: vec![],
@@ -269,6 +278,9 @@ mod tests {
         let codex = AnalysisResult {
             sessions: vec![SessionInsight {
                 project: None,
+                task_title: None,
+                questions: vec![],
+                follow_ups: vec![],
                 session_id: "x1".to_string(),
                 work_summary: "Codex 작업".to_string(),
                 decisions: vec![],
@@ -292,6 +304,9 @@ mod tests {
         let claude = AnalysisResult {
             sessions: vec![SessionInsight {
                 project: None,
+                task_title: None,
+                questions: vec![],
+                follow_ups: vec![],
                 session_id: "c1".to_string(),
                 work_summary: "Claude 작업".to_string(),
                 decisions: vec![],
@@ -324,6 +339,9 @@ mod tests {
         let analysis = AnalysisResult {
             sessions: vec![SessionInsight {
                 project: None,
+                task_title: None,
+                questions: vec![],
+                follow_ups: vec![],
                 session_id: "s1".to_string(),
                 work_summary: "요약".to_string(),
                 decisions: vec![],

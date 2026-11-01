@@ -1,7 +1,85 @@
 //! Project identity and conversation-backed retrospective state.
 
+use super::insight::Evidence;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskTitle {
+    pub text: String,
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Question {
+    pub question: String,
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
+    #[serde(default)]
+    pub updates: Vec<QuestionUpdate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionUpdate {
+    #[serde(default)]
+    pub kind: QuestionUpdateKind,
+    pub detail: String,
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionUpdateKind {
+    Answer,
+    Resolved,
+    Open,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FollowUp {
+    pub task: String,
+    #[serde(default)]
+    pub origin: FollowUpOrigin,
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
+    #[serde(default)]
+    pub updates: Vec<FollowUpUpdate>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowUpOrigin {
+    UserRequest,
+    AiSuggestion,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FollowUpUpdate {
+    #[serde(default)]
+    pub kind: FollowUpUpdateKind,
+    pub detail: String,
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowUpUpdateKind {
+    Accepted,
+    Completed,
+    Withdrawn,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
 
 /// A historical working directory, not an inferred Git repository identity.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -56,6 +134,56 @@ impl Project {
 
     pub fn label(&self) -> String {
         format!("{} ({})", self.name(), self.directory)
+    }
+}
+
+impl Question {
+    pub fn status_label(&self) -> &'static str {
+        match self.updates.last().map(|u| u.kind) {
+            Some(QuestionUpdateKind::Answer) => {
+                "Answered; resolution unconfirmed / 답변 있음, 해결 미확인"
+            }
+            Some(QuestionUpdateKind::Resolved) => "Resolution confirmed by user / 사용자 해결 확인",
+            Some(QuestionUpdateKind::Open) => "Explicitly unresolved / 미해결 명시",
+            _ => "Answer and resolution unknown / 답변 및 해결 미확인",
+        }
+    }
+}
+impl QuestionUpdateKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Answer => "AI answer / AI 답변",
+            Self::Resolved => "User resolution / 사용자 해결 확인",
+            Self::Open => "User unresolved / 사용자 미해결 명시",
+            Self::Unknown => "Unknown / 미확인",
+        }
+    }
+}
+impl FollowUpOrigin {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::UserRequest => "User request / 사용자 요청",
+            Self::AiSuggestion => "AI suggestion / AI 제안",
+            Self::Unknown => "Origin unknown / 출발 미확인",
+        }
+    }
+}
+impl FollowUp {
+    pub fn status_label(&self) -> &'static str {
+        match self.updates.last().map(|u| u.kind) {
+            Some(kind) => kind.label(),
+            None => self.origin.label(),
+        }
+    }
+}
+impl FollowUpUpdateKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Accepted => "Requested to proceed / 진행 요청",
+            Self::Completed => "Completion reported / 완료 보고",
+            Self::Withdrawn => "Withdrawn by user / 사용자 철회",
+            Self::Unknown => "Status unknown / 상태 미확인",
+        }
     }
 }
 

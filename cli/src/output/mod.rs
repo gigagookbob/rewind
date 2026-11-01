@@ -2,6 +2,7 @@
 
 mod managed;
 pub mod markdown;
+pub(crate) mod retrospective;
 mod vault;
 
 // TODO: Replace with a dedicated error type via thiserror.

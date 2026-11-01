@@ -408,7 +408,6 @@ pub mod status {
 pub mod display {
     pub const ATTRIBUTION_NOTE: &str = "AI interpretation; only quote attribution checked / AI 해석이며 인용의 원문 일치와 위치만 검사했습니다.";
     pub const DECISIONS_LABEL: &str = "Key Decisions";
-    pub const CURIOSITIES_LABEL: &str = "Questions & Curiosities";
     pub const CORRECTIONS_LABEL: &str = "Corrections & Preference Changes";
 
     pub fn summary_line(work_summary: &str) -> String {
@@ -474,7 +473,6 @@ pub mod dry_run {
 pub mod markdown {
     pub const WORK_SUMMARY_HEADER: &str = "### Work Summary";
     pub const DECISIONS_HEADER: &str = "### Key Decisions";
-    pub const CURIOSITIES_HEADER: &str = "### Questions & Curiosities";
     pub const CORRECTIONS_HEADER: &str = "### Corrections & Preference Changes";
     pub const CORRECTION_MODEL: &str = "**Model**";
     pub const CORRECTION_FIX: &str = "**User response**";
