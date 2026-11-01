@@ -1,6 +1,6 @@
 //! Local attribution checks. These verify quotations, not the meaning of an insight.
 
-use super::insight::{AnalysisResult, Evidence};
+use super::insight::{AnalysisResult, CorrectionKind, Evidence, SessionInsight};
 use super::prompt::{TimedLine, codex_role_text, extract_entry_text, splice_timed_items};
 use crate::parser::SourceLocation;
 use crate::parser::claude::{ContentBlock, LogEntry};
@@ -215,16 +215,76 @@ fn resolve(evidence: &mut [Evidence], catalog: &HashMap<String, SourceMessage>) 
         let Some(source) = catalog.get(&proof.message_id) else {
             return false;
         };
-        if proof.quote.trim().is_empty()
-            || !source.text.contains(&proof.quote)
-            || !source.rendered_text.contains(&proof.quote)
-        {
+        if !quote_matches(proof, source) {
             return false;
         }
         proof.location = Some(source.location.clone());
         proof.role.clone_from(&source.role);
     }
     true
+}
+
+fn quote_matches(proof: &Evidence, source: &SourceMessage) -> bool {
+    !proof.quote.trim().is_empty()
+        && source.text.contains(&proof.quote)
+        && source.rendered_text.contains(&proof.quote)
+}
+
+/// Keep cached descriptions, but never silently relocate or create their proof.
+pub fn revalidate_cached_session(
+    session: &mut SessionInsight,
+    sources: &[SourceMessage],
+    redactor_enabled: bool,
+) {
+    let catalog: HashMap<_, _> = sources
+        .iter()
+        .map(|source| {
+            let mut source = source.clone();
+            if redactor_enabled {
+                source.rendered_text = crate::redactor::redact_text(&source.rendered_text).0;
+            }
+            (format!("m{}", source.message_index), source)
+        })
+        .collect();
+    for evidence in session
+        .decisions
+        .iter_mut()
+        .map(|item| &mut item.evidence)
+        .chain(session.til.iter_mut().map(|item| &mut item.evidence))
+    {
+        if !cached_evidence_matches(evidence, &catalog) || !has_user(evidence) {
+            clear_attribution(evidence);
+        }
+    }
+    for item in &mut session.corrections {
+        if !cached_evidence_matches(&item.evidence, &catalog)
+            || !correction_order_matches(&item.evidence, &catalog)
+        {
+            clear_attribution(&mut item.evidence);
+            item.kind = CorrectionKind::Unknown;
+        }
+    }
+}
+
+fn cached_evidence_matches(
+    evidence: &[Evidence],
+    catalog: &HashMap<String, SourceMessage>,
+) -> bool {
+    !evidence.is_empty()
+        && evidence.iter().all(|proof| {
+            catalog.get(&proof.message_id).is_some_and(|source| {
+                proof.location.as_ref() == Some(&source.location)
+                    && proof.role == source.role
+                    && quote_matches(proof, source)
+            })
+        })
+}
+
+fn clear_attribution(evidence: &mut [Evidence]) {
+    for proof in evidence {
+        proof.location = None;
+        proof.role.clear();
+    }
 }
 
 #[cfg(test)]
@@ -384,6 +444,159 @@ mod tests {
                     assert!(mixed.sessions[0].corrections.is_empty());
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_cached_evidence_requires_same_id_role_quote_and_physical_location() {
+        let original = source("USER", "A function is enough.", 7);
+        let catalog = HashMap::from([("m1".into(), original.clone())]);
+        let mut result = analysis_with(serde_json::json!([
+            {"message_id":"m1", "quote":"A function is enough."}
+        ]));
+        validate(&mut result, "s1", &catalog);
+        let before = result.sessions[0].clone();
+        let mut shifted = original.clone();
+        shifted.location.line += 1;
+        let mut moved = original.clone();
+        moved.location.path = "/tmp/moved.jsonl".into();
+        let mut edited = original.clone();
+        edited.text = "Use a framework instead.".into();
+        let mut changed_role = original.clone();
+        changed_role.role = "ASSISTANT".into();
+        let mut reordered = original.clone();
+        reordered.message_index = 2;
+        for (name, current, matches) in [
+            ("same", vec![original.clone()], true),
+            ("shifted", vec![shifted], false),
+            ("moved", vec![moved], false),
+            ("edited", vec![edited], false),
+            ("role changed", vec![changed_role], false),
+            ("reordered", vec![reordered], false),
+            ("missing", vec![], false),
+        ] {
+            let mut session = before.clone();
+            revalidate_cached_session(&mut session, &current, true);
+            assert_eq!(session.decisions[0].what, before.decisions[0].what);
+            assert_eq!(session.til[0].title, before.til[0].title);
+            for proof in [
+                &session.decisions[0].evidence[0],
+                &session.til[0].evidence[0],
+            ] {
+                assert_eq!(proof.location.is_some(), matches, "{name}");
+                assert_eq!(proof.quote, "A function is enough.");
+                assert_eq!(proof.role.is_empty(), !matches, "{name}");
+            }
+        }
+        let mut legacy = before;
+        clear_attribution(&mut legacy.decisions[0].evidence);
+        clear_attribution(&mut legacy.til[0].evidence);
+        revalidate_cached_session(&mut legacy, &[original], false);
+        assert!(legacy.decisions[0].evidence[0].location.is_none());
+        assert!(legacy.til[0].evidence[0].location.is_none());
+    }
+
+    #[test]
+    fn test_cached_item_with_one_invalid_quote_loses_all_attribution() {
+        let original = source("USER", "A function is enough. token=synthetic-secret", 7);
+        let catalog = HashMap::from([("m1".into(), original.clone())]);
+        let mut result = analysis_with(serde_json::json!([
+            {"message_id":"m1", "quote":"A function is enough."},
+            {"message_id":"m1", "quote":"synthetic-secret"}
+        ]));
+        validate(&mut result, "s1", &catalog);
+        let mut current = original;
+        current.rendered_text = "A function is enough. token=[REDACTED]".into();
+        revalidate_cached_session(&mut result.sessions[0], &[current], false);
+        for evidence in [
+            &result.sessions[0].decisions[0].evidence,
+            &result.sessions[0].til[0].evidence,
+        ] {
+            assert_eq!(evidence.len(), 2);
+            assert!(
+                evidence
+                    .iter()
+                    .all(|proof| proof.location.is_none() && proof.role.is_empty())
+            );
+            let displayed = crate::output::display_evidence(evidence);
+            assert!(displayed.contains("근거 미확인"));
+            assert!(!displayed.contains("synthetic-secret"));
+        }
+    }
+
+    #[test]
+    fn test_cached_attribution_honors_current_masking_setting() {
+        let original = source("USER", "password = \"synthetic_value\"", 1);
+        let mut result = analysis_with(serde_json::json!([
+            {"message_id":"m1", "quote":"synthetic_value"}
+        ]));
+        validate(
+            &mut result,
+            "s1",
+            &HashMap::from([("m1".into(), original.clone())]),
+        );
+        for masking_enabled in [false, true] {
+            let mut session = result.sessions[0].clone();
+            revalidate_cached_session(
+                &mut session,
+                std::slice::from_ref(&original),
+                masking_enabled,
+            );
+            assert_eq!(
+                session.decisions[0].evidence[0].location.is_none(),
+                masking_enabled
+            );
+            assert_eq!(
+                session.til[0].evidence[0].location.is_none(),
+                masking_enabled
+            );
+        }
+    }
+
+    #[test]
+    fn test_cached_correction_downgrades_reversed_speech_and_missing_evidence() {
+        let mut model = source("ASSISTANT", "Use X", 1);
+        let mut user = source("USER", "Use Y", 2);
+        user.message_index = 2;
+        let (_, catalog) = annotate_messages(
+            &[
+                ("ASSISTANT".into(), "Use X".into()),
+                ("USER".into(), "Use Y".into()),
+            ],
+            &[model.clone(), user.clone()],
+        );
+        let mut result = super::super::insight::parse_response(r#"{"sessions":[{
+            "session_id":"s1","work_summary":"synthetic","decisions":[],"curiosities":[],"til":[],
+            "corrections":[{"kind":"preference_change","model_said":"Use X","user_corrected":"Use Y",
+                "evidence":[{"message_id":"m1","quote":"Use X"},{"message_id":"m2","quote":"Use Y"}]}]
+        }]}"#).unwrap();
+        validate(&mut result, "s1", &catalog);
+        let before = result.sessions[0].clone();
+        let mut valid = before.clone();
+        revalidate_cached_session(&mut valid, &[model.clone(), user.clone()], true);
+        assert_eq!(valid.corrections[0].kind, CorrectionKind::PreferenceChange);
+        assert!(
+            valid.corrections[0]
+                .evidence
+                .iter()
+                .all(|proof| proof.location.is_some())
+        );
+        // Mimic a cache produced before chronological validation existed.
+        model.message_index = 2;
+        user.message_index = 1;
+        let mut reversed = before.clone();
+        reversed.corrections[0].evidence[0].message_id = "m2".into();
+        reversed.corrections[0].evidence[1].message_id = "m1".into();
+        for mut session in [before, reversed] {
+            revalidate_cached_session(&mut session, &[model.clone(), user.clone()], false);
+            assert_eq!(session.corrections.len(), 1);
+            assert_eq!(session.corrections[0].kind, CorrectionKind::Unknown);
+            assert!(
+                session.corrections[0]
+                    .evidence
+                    .iter()
+                    .all(|proof| proof.location.is_none())
+            );
         }
     }
 

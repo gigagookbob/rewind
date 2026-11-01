@@ -62,8 +62,8 @@ pub(crate) async fn run_today(
 
         if count_matches && timezone_matches {
             println!("\n{}", crate::messages::status::CACHE_USED);
-            let source_refs: Vec<(&str, &analyzer::AnalysisResult)> = cached
-                .sources
+            let cached_sources = prepare_cached_sources(cached, &run, redactor_enabled);
+            let source_refs: Vec<(&str, &analyzer::AnalysisResult)> = cached_sources
                 .iter()
                 .map(|(name, result)| (name.as_str(), result))
                 .collect();
@@ -172,6 +172,34 @@ pub(crate) async fn run_today(
     }
 
     Ok(())
+}
+
+fn prepare_cached_sources(
+    cached: cache::TodayCache,
+    run: &CollectionRun,
+    redactor_enabled: bool,
+) -> Vec<(String, analyzer::AnalysisResult)> {
+    let mut results = cached.sources;
+    for (name, analysis) in &mut results {
+        let current = run
+            .sources
+            .iter()
+            .find(|source| source.display_name == name);
+        for session in &mut analysis.sessions {
+            let sources = current
+                .and_then(|source| {
+                    source
+                        .collection
+                        .sessions
+                        .iter()
+                        .find(|candidate| candidate.task.session_id == session.session_id)
+                })
+                .map(|candidate| candidate.task.evidence_sources.as_slice())
+                .unwrap_or_default();
+            analyzer::evidence::revalidate_cached_session(session, sources, redactor_enabled);
+        }
+    }
+    results
 }
 
 /// `rwd today --dry-run`: collects sessions and lists them without touching
@@ -314,6 +342,95 @@ mod tests {
         }
         found.sort();
         found
+    }
+
+    #[test]
+    fn test_cached_sources_downgrade_shifted_lines_without_reanalysis() {
+        let base = unique_temp_dir("rwd_test_cached_location");
+        let path = base.join("project/session.jsonl");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let log = concat!(
+            r#"{"type":"user","sessionId":"s1","timestamp":"2099-01-01T12:00:00Z","uuid":"u1","message":{"content":"A function is enough."}}"#,
+            "\n"
+        );
+        std::fs::write(&path, log).unwrap();
+        let adapters: Vec<Box<dyn sources::SourceAdapter>> =
+            vec![Box::new(ClaudeAdapter::with_roots(vec![base.clone()]))];
+        let date = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
+        let ctx = sources::CollectContext {
+            date,
+            config: None,
+            include_automated: false,
+        };
+        let mut original = collect_sources(&adapters, &ctx);
+        let task = &original.sources[0].collection.sessions[0].task;
+        let (_, catalog) =
+            analyzer::evidence::annotate_messages(&task.messages, &task.evidence_sources);
+        let mut analysis = analyzer::insight::parse_response(r#"{"sessions":[{
+            "session_id":"s1","work_summary":"synthetic","curiosities":[],"corrections":[],
+            "decisions":[{"what":"Use a function","why":"","evidence":[{"message_id":"m1","quote":"A function is enough."}]}],
+            "til":[{"title":"synthetic learning","detail":"","evidence":[{"message_id":"m1","quote":"A function is enough."}]}]
+        }]}"#).unwrap();
+        analyzer::evidence::validate(&mut analysis, "s1", &catalog);
+        assert_eq!(
+            analysis.sessions[0].decisions[0].evidence[0]
+                .location
+                .as_ref()
+                .unwrap()
+                .line,
+            1
+        );
+        let cached = cache::TodayCache {
+            date: date.to_string(),
+            source_fingerprints: original.fingerprint_table(),
+            timezone_window_key: cache::timezone_window_key(date),
+            sources: vec![("Claude Code".into(), analysis)],
+        };
+        let saved_cache = serde_json::to_string(&cached).unwrap();
+        let unchanged =
+            prepare_cached_sources(serde_json::from_str(&saved_cache).unwrap(), &original, true);
+        assert!(
+            unchanged[0].1.sessions[0].decisions[0].evidence[0]
+                .location
+                .is_some()
+        );
+        for missing in ["source", "session"] {
+            if missing == "source" {
+                original.sources[0].display_name = "Codex";
+            } else {
+                original.sources[0].collection.sessions[0].task.session_id = "other".into();
+            }
+            let prepared = prepare_cached_sources(
+                serde_json::from_str(&saved_cache).unwrap(),
+                &original,
+                false,
+            );
+            assert!(
+                prepared[0].1.sessions[0].decisions[0].evidence[0]
+                    .location
+                    .is_none(),
+                "{missing}"
+            );
+            original.sources[0].display_name = "Claude Code";
+            original.sources[0].collection.sessions[0].task.session_id = "s1".into();
+        }
+        // Only a physical line changes; the normal cache reuse checks still pass.
+        std::fs::write(&path, format!("\n{log}")).unwrap();
+        let current = collect_sources(&adapters, &ctx);
+        std::fs::remove_dir_all(&base).unwrap();
+        assert!(cache::fingerprints_match(
+            &cached,
+            &current.fingerprint_table()
+        ));
+        assert!(cache::is_timezone_compatible(&cached, date));
+        let prepared = prepare_cached_sources(cached, &current, true);
+        let session = &prepared[0].1.sessions[0];
+        assert_eq!(session.decisions[0].what, "Use a function");
+        assert!(session.decisions[0].evidence[0].location.is_none());
+        assert!(session.til[0].evidence[0].location.is_none());
+        let md = output::render_combined_markdown(&[("Claude Code", &prepared[0].1)], date);
+        assert!(md.contains("근거 미확인"));
+        assert!(!md.contains(&format!("{}:1", path.display())));
     }
 
     #[test]
