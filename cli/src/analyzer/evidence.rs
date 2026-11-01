@@ -175,14 +175,33 @@ pub fn validate(
             .retain_mut(|item| resolve(&mut item.evidence, catalog) && has_user(&item.evidence));
         session.corrections.retain_mut(|item| {
             resolve(&mut item.evidence, catalog)
-                && has_user(&item.evidence)
-                && item.evidence.iter().any(|e| e.role == "ASSISTANT")
+                && correction_order_matches(&item.evidence, catalog)
         });
     }
 }
 
 fn has_user(evidence: &[Evidence]) -> bool {
     evidence.iter().any(|e| e.role == "USER")
+}
+
+fn correction_order_matches(
+    evidence: &[Evidence],
+    catalog: &HashMap<String, SourceMessage>,
+) -> bool {
+    let latest_model = evidence
+        .iter()
+        .filter(|proof| proof.role == "ASSISTANT")
+        .filter_map(|proof| catalog.get(&proof.message_id))
+        .map(|source| source.message_index)
+        .max();
+    let first_user = evidence
+        .iter()
+        .filter(|proof| proof.role == "USER")
+        .filter_map(|proof| catalog.get(&proof.message_id))
+        .map(|source| source.message_index)
+        .min();
+    // Every cited model statement must precede the correcting user speech.
+    matches!((latest_model, first_user), (Some(model), Some(user)) if model < user)
 }
 
 fn resolve(evidence: &mut [Evidence], catalog: &HashMap<String, SourceMessage>) -> bool {
@@ -318,6 +337,53 @@ mod tests {
             result.sessions[0].corrections[0].evidence.remove(0);
             validate(&mut result, "s1", &catalog);
             assert!(result.sessions[0].corrections.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_correction_requires_model_speech_before_user_response() {
+        for (model_index, user_index, accepted) in [(2, 10, true), (10, 2, false)] {
+            let mut model = source("ASSISTANT", "This feature is supported.", 90);
+            model.message_index = model_index;
+            let mut user = source("USER", "This feature is not supported.", 3);
+            user.message_index = user_index;
+            let model_id = format!("m{model_index}");
+            let user_id = format!("m{user_index}");
+            let mut catalog = HashMap::from([(model_id.clone(), model), (user_id.clone(), user)]);
+            // Deliberately list the user quote first. Conversation order, not
+            // array order, lexical IDs, or physical line numbers, determines it.
+            let mut result = super::super::insight::parse_response(
+                &serde_json::json!({"sessions":[{
+                    "session_id":"s1", "work_summary":"synthetic", "decisions":[], "til":[],
+                    "curiosities":[], "corrections":[{
+                        "model_said":"This feature is supported.",
+                        "user_corrected":"This feature is not supported.","kind":"factual_error",
+                        "evidence":[{"message_id":user_id,"quote":"This feature is not supported."},
+                            {"message_id":model_id,"quote":"This feature is supported."}]
+                    }]
+                }]})
+                .to_string(),
+            )
+            .unwrap();
+            validate(&mut result, "s1", &catalog);
+            assert_eq!(result.sessions[0].corrections.len(), usize::from(accepted));
+            if accepted {
+                for (role, index) in [("ASSISTANT", 11), ("USER", 1)] {
+                    let mut extra = source(role, "Extra context", 4);
+                    extra.message_index = index;
+                    let id = format!("m{index}");
+                    catalog.insert(id.clone(), extra);
+                    let mut mixed = result.clone();
+                    mixed.sessions[0].corrections[0].evidence.push(
+                        serde_json::from_value(serde_json::json!({
+                            "message_id": id, "quote": "Extra context"
+                        }))
+                        .unwrap(),
+                    );
+                    validate(&mut mixed, "s1", &catalog);
+                    assert!(mixed.sessions[0].corrections.is_empty());
+                }
+            }
         }
     }
 
