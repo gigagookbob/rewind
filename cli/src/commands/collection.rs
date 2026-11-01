@@ -77,9 +77,14 @@ fn analysis_input_digest(collection: &SourceCollection) -> String {
             source.location.line.hash(&mut hash);
             source.timestamp.hash(&mut hash);
             source.is_reference.hash(&mut hash);
+            if source.is_reference {
+                // Protection now examines full reference speech before choosing
+                // its bounded tail, so hidden-prefix changes affect the input.
+                source.text.hash(&mut hash);
+            }
         }
     }
-    format!("multi-day-v1:{:016x}", hash.finish())
+    format!("ai-redaction-v1:{:016x}", hash.finish())
 }
 
 #[cfg(test)]
@@ -91,6 +96,39 @@ mod tests {
     struct FakeAdapter {
         id: &'static str,
         fail: bool,
+    }
+
+    #[test]
+    fn test_cache_digest_tracks_reference_prefix_used_by_pre_selection_redaction() {
+        let ctx = CollectContext {
+            date: chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+            config: None,
+            include_automated: false,
+        };
+        let mut collection = FakeAdapter {
+            id: "fake",
+            fail: false,
+        }
+        .collect(&ctx)
+        .unwrap();
+        collection.sessions[0].task.evidence_sources.push(
+            crate::analyzer::evidence::SourceMessage {
+                timestamp: None,
+                is_reference: true,
+                message_index: 1,
+                role: "USER".into(),
+                text: format!("sk-proj-{}", "a".repeat(6_000)),
+                rendered_text: format!("[REFERENCE yesterday] {}", "a".repeat(3_900)),
+                location: crate::parser::SourceLocation {
+                    path: "/synthetic/ref.jsonl".into(),
+                    line: 1,
+                },
+            },
+        );
+        let before = analysis_input_digest(&collection);
+        collection.sessions[0].task.evidence_sources[0].text =
+            format!("plain-{}", "a".repeat(6_000));
+        assert_ne!(before, analysis_input_digest(&collection));
     }
 
     #[test]

@@ -170,6 +170,59 @@ pub fn annotate_messages(
     (annotated, catalog)
 }
 
+/// Analysis and cache validation must use the same pre-split masked speech.
+pub fn annotate_protected_messages(
+    messages: &[(String, String)],
+    sources: &[SourceMessage],
+    enabled: bool,
+) -> (
+    Vec<(String, String)>,
+    HashMap<String, SourceMessage>,
+    crate::redactor::RedactResult,
+) {
+    let (mut annotated, mut catalog) = annotate_messages(messages, sources);
+    let texts: Vec<_> = messages
+        .iter()
+        .enumerate()
+        .map(|(index, (_, text))| {
+            catalog
+                .get(&format!("m{}", index + 1))
+                .filter(|s| s.is_reference)
+                .map_or(text.as_str(), |s| s.text.as_str())
+        })
+        .collect();
+    let (masked, redact) = if enabled {
+        crate::redactor::redact_parts(&texts)
+    } else {
+        (
+            texts.iter().map(|s| s.to_string()).collect(),
+            crate::redactor::RedactResult::empty(),
+        )
+    };
+    for (index, ((_, text), masked)) in annotated.iter_mut().zip(masked).enumerate() {
+        let id = format!("m{}", index + 1);
+        // Inputs retained for safe masking can now be compacted without
+        // removing a secret's detector prefix. Disabled mode preserves values.
+        let masked = super::compaction::compact_log_like(&masked);
+        if let Some(source) = catalog.get_mut(&id) {
+            let masked = if source.is_reference {
+                if enabled {
+                    super::context::render_protected_reference(source, &masked)
+                } else {
+                    source.rendered_text.clone()
+                }
+            } else {
+                masked
+            };
+            source.rendered_text = masked.clone();
+            *text = format!("[{id}] {masked}");
+        } else {
+            *text = masked;
+        }
+    }
+    (annotated, catalog, redact)
+}
+
 /// Fail closed on missing IDs, empty quotes, and quotations absent from either
 /// the original visible text or the compacted/masked analysis input.
 pub fn validate(
@@ -296,18 +349,10 @@ fn quote_matches(proof: &Evidence, source: &SourceMessage) -> bool {
 pub fn revalidate_cached_session(
     session: &mut SessionInsight,
     sources: &[SourceMessage],
+    messages: &[(String, String)],
     redactor_enabled: bool,
 ) {
-    let catalog: HashMap<_, _> = sources
-        .iter()
-        .map(|source| {
-            let mut source = source.clone();
-            if redactor_enabled {
-                source.rendered_text = crate::redactor::redact_text(&source.rendered_text).0;
-            }
-            (format!("m{}", source.message_index), source)
-        })
-        .collect();
+    let (_, catalog, _) = annotate_protected_messages(messages, sources, redactor_enabled);
     for evidence in session
         .decisions
         .iter_mut()
@@ -357,6 +402,22 @@ fn clear_attribution(evidence: &mut [Evidence]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn revalidate_cached_session(
+        session: &mut SessionInsight,
+        sources: &[SourceMessage],
+        enabled: bool,
+    ) {
+        let mut messages = vec![
+            (String::new(), String::new());
+            sources.iter().map(|s| s.message_index).max().unwrap_or(0)
+        ];
+        for source in sources {
+            messages[source.message_index - 1] =
+                (source.role.clone(), source.rendered_text.clone());
+        }
+        super::revalidate_cached_session(session, sources, &messages, enabled);
+    }
 
     fn source(role: &str, text: &str, line: usize) -> SourceMessage {
         SourceMessage {

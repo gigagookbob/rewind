@@ -50,12 +50,12 @@ struct ApiContentBlock {
 }
 
 /// Calls the Anthropic Claude Messages API and returns the raw text response.
-pub async fn call_anthropic_api(
+pub(super) fn build_request(
     api_key: &str,
     system_prompt: &str,
     conversation_text: &str,
     max_tokens: u32,
-) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
+) -> Result<reqwest::Request, super::AnalyzerError> {
     let client = reqwest::Client::new();
 
     let request_body = ApiRequest {
@@ -68,19 +68,26 @@ pub async fn call_anthropic_api(
         }],
     };
 
-    let response = client
+    Ok(client
         .post(API_URL)
         .header("x-api-key", api_key)
         .header("anthropic-version", API_VERSION)
         .header("content-type", "application/json")
         .json(&request_body)
-        .send()
-        .await?;
+        .build()?)
+}
+
+pub(super) async fn send_request(
+    request: reqwest::Request,
+) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
+    let response = reqwest::Client::new().execute(request).await?;
 
     let status = response.status();
     if !status.is_success() {
-        let error_body = response.text().await.unwrap_or_default();
-        return Err(crate::messages::error::api_request_failed(&status, &error_body).into());
+        // Provider errors may echo submitted conversations or credentials.
+        return Err(
+            crate::messages::error::api_request_failed(&status, "response body omitted").into(),
+        );
     }
 
     let api_response: ApiResponse = response.json().await?;

@@ -273,10 +273,16 @@ pub async fn summarize_chunks(
         ));
 
         let response = provider
-            .call_text_api(api_key, get_chunk_summarize_prompt(lang), chunk_text, 2000)
+            .call_text_api(
+                api_key,
+                get_chunk_summarize_prompt(lang),
+                chunk_text,
+                2000,
+                limits.input_tokens_per_minute.min(MAX_CHUNK_INPUT_TOKENS),
+            )
             .await;
         super::stop_spinner(sp);
-        let (summary, _usage) = response?;
+        let (summary, usage) = response?;
         if summary.trim().is_empty() {
             return Err(format!("Empty summary for source chunk {source_number}").into());
         }
@@ -287,8 +293,9 @@ pub async fn summarize_chunks(
         summaries.push(summary);
 
         // The last chunk is also followed by an API call: final analysis.
-        let chunk_tokens =
-            estimate_tokens(chunk_text) + estimate_tokens(get_chunk_summarize_prompt(lang));
+        let chunk_tokens = usage
+            .input_tokens
+            .max(provider.estimate_input_tokens(get_chunk_summarize_prompt(lang), chunk_text));
         let wait = calculate_wait(chunk_tokens, limits);
         if wait > 0.0 {
             super::countdown_sleep(wait.ceil() as u64).await;

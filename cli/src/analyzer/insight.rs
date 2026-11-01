@@ -142,13 +142,7 @@ pub fn parse_response(raw_text: &str) -> Result<AnalysisResult, super::AnalyzerE
 
     serde_json::from_str::<AnalysisResult>(&cleaned)
         .or_else(|_| extract_json_object(&cleaned))
-        .map_err(|e| {
-            let preview_end = raw_text
-                .char_indices()
-                .nth(200)
-                .map_or(raw_text.len(), |(idx, _)| idx);
-            crate::messages::error::json_parse_failed(&e, &raw_text[..preview_end]).into()
-        })
+        .map_err(|e| crate::messages::error::json_parse_failed(e.line(), e.column()).into())
 }
 
 /// Extracts a JSON object from text that may contain non-JSON content.

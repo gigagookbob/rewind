@@ -120,13 +120,15 @@ fn cap_to_budget(texts: Vec<String>, per_item: usize, session_total: usize) -> V
         .collect()
 }
 
-/// Shortens `text` to at most `max_chars` chars (marker included), keeping the
+/// Shortens ordinary `text` to at most `max_chars` chars (marker included), keeping the
 /// first two thirds and the last third. Reports often end with the
 /// conclusion, so the tail is kept; the 2:1 split is a judgment call, not
 /// measured (SPEC.md, stage 4 length caps).
 pub fn truncate_middle(text: &str, max_chars: usize) -> String {
     let total = text.chars().count();
-    if total <= max_chars {
+    // Defer lossy caps when they would tear a recognizable value in half.
+    // Provider input budgets still apply after the common masking policy.
+    if total <= max_chars || crate::redactor::contains_sensitive(text) {
         return text.to_string();
     }
     // The marker for `total` omitted chars is the widest one possible.

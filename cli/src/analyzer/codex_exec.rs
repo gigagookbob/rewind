@@ -11,40 +11,33 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::{AnalyzerError, ApiUsage};
 
 /// Calls Codex for JSON analysis output.
-pub async fn call_codex_json_api(
-    system_prompt: &str,
-    conversation_text: &str,
+pub(super) async fn call_codex_api(
+    prompt: &str,
     max_tokens: u32,
     model: &str,
     reasoning_effort: &str,
+    json_output: bool,
 ) -> Result<(String, ApiUsage), AnalyzerError> {
-    let prompt = compose_prompt(system_prompt, conversation_text);
-    let schema_path = write_analysis_schema_file()?;
+    let schema_path = if json_output {
+        Some(write_analysis_schema_file()?)
+    } else {
+        None
+    };
     let result = run_codex_exec(
-        &prompt,
-        Some(schema_path.as_path()),
+        prompt,
+        schema_path.as_deref(),
         max_tokens,
         model,
         reasoning_effort,
     )
     .await;
-    let _ = std::fs::remove_file(schema_path);
+    if let Some(path) = schema_path {
+        let _ = std::fs::remove_file(path);
+    }
     result
 }
 
-/// Calls Codex for plain-text output (summary/slack/chunk summarize).
-pub async fn call_codex_text_api(
-    system_prompt: &str,
-    conversation_text: &str,
-    max_tokens: u32,
-    model: &str,
-    reasoning_effort: &str,
-) -> Result<(String, ApiUsage), AnalyzerError> {
-    let prompt = compose_prompt(system_prompt, conversation_text);
-    run_codex_exec(&prompt, None, max_tokens, model, reasoning_effort).await
-}
-
-fn compose_prompt(system_prompt: &str, conversation_text: &str) -> String {
+pub(super) fn compose_prompt(system_prompt: &str, conversation_text: &str) -> String {
     format!("[System Instructions]\n{system_prompt}\n\n[Conversation]\n{conversation_text}")
 }
 
@@ -219,56 +212,44 @@ fn run_codex_exec_blocking(
     }
     let output = child.wait_with_output()?;
 
+    parse_output(output)
+}
+
+pub(super) fn parse_output(
+    output: std::process::Output,
+) -> Result<(String, ApiUsage), AnalyzerError> {
     if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let detail = summarize_error(&stdout, &stderr);
-        return Err(format!("Codex exec failed ({}): {detail}", output.status).into());
+        if is_rate_limited(
+            &String::from_utf8_lossy(&output.stdout),
+            &String::from_utf8_lossy(&output.stderr),
+        ) {
+            return Err("Codex exec failed: HTTP 429 (rate limited); response body omitted".into());
+        }
+        return Err(format!("Codex exec failed ({})", output.status).into());
     }
 
     let stdout = String::from_utf8(output.stdout)?;
     parse_jsonl_events(&stdout)
 }
 
-fn summarize_error(stdout: &str, stderr: &str) -> String {
-    if let Some(message) = summarize_stdout_error(stdout) {
-        return message;
-    }
-
-    stderr
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .map(|line| line.trim().to_string())
-        .unwrap_or_else(|| "unknown error".to_string())
-}
-
-fn summarize_stdout_error(stdout: &str) -> Option<String> {
-    for line in stdout.lines().rev() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
+/// Preserve only a retry classification, never the untrusted error message.
+fn is_rate_limited(stdout: &str, stderr: &str) -> bool {
+    let limited = |message: &str| {
+        message
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|s| s == "429")
+            || message.to_ascii_lowercase().contains("rate limit")
+    };
+    stdout.lines().any(|line| {
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+            return false;
         };
-        let Some(event_type) = value.get("type").and_then(|t| t.as_str()) else {
-            continue;
-        };
-        if event_type == "turn.failed"
-            && let Some(message) = value
-                .get("error")
-                .and_then(|e| e.get("message"))
-                .and_then(|m| m.as_str())
-        {
-            return Some(message.trim().to_string());
+        match event["type"].as_str() {
+            Some("turn.failed") => event["error"]["message"].as_str().is_some_and(limited),
+            Some("error") => event["message"].as_str().is_some_and(limited),
+            _ => false,
         }
-        if event_type == "error"
-            && let Some(message) = value.get("message").and_then(|m| m.as_str())
-        {
-            return Some(message.trim().to_string());
-        }
-    }
-    None
+    }) || limited(stderr)
 }
 
 fn parse_jsonl_events(stdout: &str) -> Result<(String, ApiUsage), AnalyzerError> {

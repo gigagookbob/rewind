@@ -104,6 +104,12 @@ pub fn compact_log_like(text: &str) -> String {
         return text.to_string();
     }
 
+    // Keep the whole recognizable secret for the common policy boundary.
+    // Otherwise a log run can discard a PEM header but keep its body tail.
+    if crate::redactor::contains_sensitive(text) {
+        return text.to_string();
+    }
+
     let trailing_newline = text.ends_with('\n');
     let lines: Vec<&str> = text.lines().collect();
     if lines.is_empty() {

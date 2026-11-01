@@ -110,7 +110,6 @@ pub(crate) async fn run_today(
             .collect();
         let (result, redact_result) = analyzer::analyze_session_tasks(
             tasks,
-            redactor_enabled,
             verbose,
             &lang,
             source.display_name,
@@ -186,7 +185,7 @@ fn prepare_cached_sources(
             .iter()
             .find(|source| source.display_name == name);
         for session in &mut analysis.sessions {
-            let sources = current
+            let task = current
                 .and_then(|source| {
                     source
                         .collection
@@ -194,9 +193,17 @@ fn prepare_cached_sources(
                         .iter()
                         .find(|candidate| candidate.task.session_id == session.session_id)
                 })
-                .map(|candidate| candidate.task.evidence_sources.as_slice())
+                .map(|candidate| &candidate.task);
+            let sources = task
+                .map(|t| t.evidence_sources.as_slice())
                 .unwrap_or_default();
-            analyzer::evidence::revalidate_cached_session(session, sources, redactor_enabled);
+            let messages = task.map(|t| t.messages.as_slice()).unwrap_or_default();
+            analyzer::evidence::revalidate_cached_session(
+                session,
+                sources,
+                messages,
+                redactor_enabled,
+            );
         }
     }
     results

@@ -22,13 +22,13 @@ pub struct RedactorRule {
 /// Returns the list of built-in redaction rules.
 pub fn builtin_rules() -> Vec<RedactorRule> {
     static API_KEY: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\bsk-[a-zA-Z0-9_-]{20,}\b").expect("API_KEY regex"));
+        LazyLock::new(|| Regex::new(r"sk-[a-zA-Z0-9_-]{20,}").expect("API_KEY regex"));
     static AWS_KEY: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\bAKIA[0-9A-Z]{16}\b").expect("AWS_KEY regex"));
+        LazyLock::new(|| Regex::new(r"AKIA[0-9A-Z]{16}").expect("AWS_KEY regex"));
     static GITHUB_TOKEN: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\bgh[ps]_[a-zA-Z0-9]{36,}\b").expect("GITHUB_TOKEN regex"));
+        LazyLock::new(|| Regex::new(r"gh[ps]_[a-zA-Z0-9]{36,}").expect("GITHUB_TOKEN regex"));
     static SLACK_TOKEN: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\bxox[bpsa]-[a-zA-Z0-9\-]+\b").expect("SLACK_TOKEN regex"));
+        LazyLock::new(|| Regex::new(r"xox[bpsa]-[a-zA-Z0-9\-]+").expect("SLACK_TOKEN regex"));
     static BEARER_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"Bearer\s+[a-zA-Z0-9\-._~+/]+=*").expect("BEARER_TOKEN regex")
     });
@@ -37,7 +37,7 @@ pub fn builtin_rules() -> Vec<RedactorRule> {
             .expect("ENV_SECRET regex")
     });
     static PRIVATE_IP: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"\b(10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)\b")
+        Regex::new(r"(10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)")
             .expect("PRIVATE_IP regex")
     });
     static PRIVATE_KEY: LazyLock<Regex> = LazyLock::new(|| {

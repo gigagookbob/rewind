@@ -44,6 +44,14 @@ pub fn redact_text(text: &str) -> (String, RedactResult) {
     (parts.remove(0), result)
 }
 
+/// Lossy preprocessing must leave recognizable values intact until the caller
+/// applies its enabled/disabled policy. This does not mask or count anything.
+pub fn contains_sensitive(text: &str) -> bool {
+    patterns::builtin_rules()
+        .iter()
+        .any(|rule| rule.pattern.is_match(text))
+}
+
 /// Scan before inserting role/ID/chunk headers. A match crossing a part boundary
 /// is masked in every affected part, but counted only once. Concatenating with
 /// no separator deliberately prefers over-masking to exposing split secrets.
@@ -60,17 +68,26 @@ pub fn redact_parts(parts: &[&str]) -> (Vec<String>, RedactResult) {
         if count > 0 {
             let replacement = format!("[REDACTED:{}]", rule.name);
             let mut offset = 0;
+            let mut pending = matches.iter().peekable();
             for part in &mut result_parts {
                 let end = offset + part.len();
                 let mut masked = String::new();
                 let mut cursor = offset;
-                for found in &matches {
+                while let Some(found) = pending.peek() {
+                    if found.start() >= end {
+                        break;
+                    }
                     let start = found.start().max(offset);
                     let stop = found.end().min(end);
                     if start < stop {
                         masked.push_str(&joined[cursor..start]);
                         masked.push_str(&replacement);
                         cursor = stop;
+                    }
+                    if found.end() <= end {
+                        pending.next();
+                    } else {
+                        break;
                     }
                 }
                 masked.push_str(&joined[cursor..end]);
@@ -119,6 +136,37 @@ mod tests {
         let (_, count) = redact_text(&format!("api_key = \"sk-proj-{}\"", "x".repeat(40)));
         assert_eq!(count.total_count, 1);
         assert_eq!(count.by_type["ENV_SECRET"], 1);
+    }
+
+    #[test]
+    fn test_builtin_secrets_cross_message_boundaries_with_adjacent_prose() {
+        for secret in [
+            "sk-proj-abcdefghijklmnopqrstuvwxyz1234-",
+            "AKIAIOSFODNN7EXAMPLE",
+            "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn",
+            "xoxb-123456-abcdef-",
+            "Bearer eyJhbGciOiJIUzI1NiJ9.test",
+            "password = 'synthetic_value'",
+            "192.168.1.100",
+        ] {
+            for split in 1..secret.len() {
+                let (masked, count) = redact_parts(&[
+                    "previous prose",
+                    &secret[..split],
+                    &secret[split..],
+                    "다음 문장",
+                ]);
+                assert!(
+                    masked[1].starts_with("[REDACTED:"),
+                    "first part was not masked"
+                );
+                assert!(
+                    masked[2].starts_with("[REDACTED:"),
+                    "second part was not masked"
+                );
+                assert_eq!(count.total_count, 1);
+            }
+        }
     }
 
     #[test]

@@ -6,6 +6,30 @@ use crate::parser::UtcDateWindow;
 pub const MAX_REFERENCE_MESSAGES: usize = 12;
 pub const MAX_REFERENCE_CHARS: usize = 4_000;
 
+/// The source keeps full speech locally, so a clipped secret's missing prefix
+/// can still be detected before selecting the protected reference tail.
+pub(super) fn render_protected_reference(source: &SourceMessage, protected: &str) -> String {
+    let Some((marker, _)) = source
+        .rendered_text
+        .split_once("] ")
+        .filter(|(marker, _)| marker.starts_with("[REFERENCE "))
+    else {
+        return protected.to_string();
+    };
+    let prefix = format!("{marker}] ");
+    let room = source
+        .rendered_text
+        .chars()
+        .count()
+        .saturating_sub(prefix.chars().count());
+    let visible = super::compaction::compact_log_like(protected);
+    let tail: String = visible
+        .chars()
+        .skip(visible.chars().count().saturating_sub(room))
+        .collect();
+    format!("{prefix}{tail}")
+}
+
 fn select_reference(mut sources: Vec<SourceMessage>, window: UtcDateWindow) -> Vec<SourceMessage> {
     sources.retain(|s| s.timestamp.is_some_and(|ts| ts < window.start_utc));
     sources.sort_by_key(|s| s.timestamp);

@@ -29,6 +29,9 @@ pub struct ApiUsage {
 use crate::parser::claude::LogEntry;
 use crate::parser::codex::CodexEntry;
 use crate::redactor::RedactResult;
+
+#[cfg(test)]
+mod transport_tests;
 use executor::execute_plan_parallel;
 use planner::{SessionEstimate, StepStrategy};
 use std::collections::HashMap;
@@ -125,12 +128,12 @@ pub async fn prepare_session_analysis_context() -> Result<SessionAnalysisContext
 
 /// Displays a countdown with spinner animation, updating every second.
 async fn countdown_sleep(total_secs: u64) {
-    use std::time::Duration;
-
     let spinner = start_spinner(crate::messages::status::countdown_waiting(total_secs));
+    // Fake transport tests follow real retry/pacing branches without waiting.
+    #[cfg(not(test))]
     for remaining in (1..=total_secs).rev() {
         spinner.set_message(crate::messages::status::countdown_waiting(remaining));
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
     stop_spinner(spinner);
 }
@@ -220,7 +223,6 @@ pub fn build_codex_session_task(
 /// Shared session analysis pipeline used by both Claude and Codex inputs.
 pub async fn analyze_session_tasks(
     tasks: Vec<SessionTask>,
-    redactor_enabled: bool,
     verbose: bool,
     lang: &crate::config::Lang,
     scope_label: &str,
@@ -303,7 +305,6 @@ pub async fn analyze_session_tasks(
         tasks,
         &context.provider,
         &context.api_key,
-        redactor_enabled,
         verbose,
         lang,
     )

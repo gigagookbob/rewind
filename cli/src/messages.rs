@@ -230,8 +230,8 @@ pub mod error {
         format!("Unsupported platform: {os}-{arch}")
     }
 
-    pub fn unsupported_provider_in_config(provider: &str) -> String {
-        format!("Unsupported provider in config: '{provider}'. Available: anthropic, openai, codex")
+    pub fn unsupported_provider_in_config() -> String {
+        "Unsupported provider in config. Available: anthropic, openai, codex".to_string()
     }
 
     pub fn api_request_failed(status: &dyn std::fmt::Display, body: &str) -> String {
@@ -251,9 +251,9 @@ pub mod error {
     /// Must be a prefix of the message produced by `json_parse_failed()`.
     pub const JSON_PARSE_FAILED_MARKER: &str = "LLM response JSON parse failed";
 
-    pub fn json_parse_failed(e: &dyn std::fmt::Display, preview: &str) -> String {
+    pub fn json_parse_failed(line: usize, column: usize) -> String {
         format!(
-            "LLM response JSON parse failed: {e}\nResponse preview (first 200 chars): {preview}"
+            "LLM response JSON parse failed at line {line}, column {column}; response body omitted"
         )
     }
 
