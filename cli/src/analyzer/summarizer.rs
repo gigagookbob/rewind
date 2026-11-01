@@ -228,7 +228,17 @@ fn evidence_prefix(text: &str) -> &str {
         && !number.is_empty()
         && number.bytes().all(|b| b.is_ascii_digit())
     {
-        &text[..id.len() + 2]
+        let id_end = id.len() + 2;
+        // Reference speech may span many chunks under a small input cap.
+        // Repeat its date marker with the ID so a tail fragment cannot look
+        // like fresh target-day activity after earlier chunks are omitted.
+        if text[id_end..].starts_with("[REFERENCE ")
+            && let Some((reference, _)) = text[id_end..].split_once("] ")
+        {
+            &text[..id_end + reference.len() + 2]
+        } else {
+            &text[..id_end]
+        }
     } else {
         ""
     }
@@ -302,6 +312,59 @@ mod tests {
     }
 
     #[test]
+    fn test_bounded_prior_context_does_not_displace_todays_final_two_chunks() {
+        let mut messages = vec![(
+            "ASSISTANT".into(),
+            format!(
+                "[m1] [REFERENCE 2026-10-31; prior context only] {}",
+                "A".repeat(3_900)
+            ),
+        )];
+        messages.extend((2..20).map(|n| {
+            (
+                "USER".into(),
+                format!("[m{n}] TODAY {n} {}", "x".repeat(150)),
+            )
+        }));
+        messages.push((
+            "USER".into(),
+            "[m20] TODAY FINAL: choose B, withdraw A".into(),
+        ));
+        let chunks = split_into_chunks(&messages, 300, 600).unwrap();
+        assert!(chunks.len() > MAX_CHUNKS_PER_SESSION);
+        let plan = prepare_summary_inputs(&chunks, &Lang::Ko).unwrap();
+        assert!(plan.coverage_notice.is_some());
+        let last_two: Vec<_> = chunks[chunks.len() - 2..]
+            .iter()
+            .flatten()
+            .cloned()
+            .collect();
+        assert!(
+            last_two
+                .iter()
+                .all(|part| plan.source_fragments.contains(part))
+        );
+        assert!(
+            plan.source_fragments
+                .iter()
+                .any(|part| part.text.contains("TODAY FINAL"))
+        );
+        assert!(plan.inputs[0].1.contains("[REFERENCE"));
+        assert_eq!(plan.inputs.len(), 3);
+        for fragment in chunks
+            .iter()
+            .flatten()
+            .filter(|part| part.message_index == 1)
+        {
+            assert!(
+                fragment
+                    .text
+                    .starts_with("[m1] [REFERENCE 2026-10-31; prior context only] ")
+            );
+        }
+    }
+
+    #[test]
     fn test_summary_cannot_cite_an_omitted_original_message() {
         use super::super::{evidence, insight};
         let messages: Vec<(String, String)> = (1..=4)
@@ -311,6 +374,8 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(i, (role, text))| evidence::SourceMessage {
+                timestamp: None,
+                is_reference: false,
                 message_index: i + 1,
                 role: role.clone(),
                 text: text.clone(),
@@ -363,6 +428,8 @@ mod tests {
             .enumerate()
             .filter(|(_, (role, _))| role != "META")
             .map(|(i, (role, text))| evidence::SourceMessage {
+                timestamp: None,
+                is_reference: false,
                 message_index: i + 1,
                 role: role.clone(),
                 text: text.clone(),

@@ -3,6 +3,7 @@
 pub mod anthropic;
 pub mod codex_exec;
 pub mod compaction;
+pub mod context;
 pub mod evidence;
 mod executor;
 pub mod insight;

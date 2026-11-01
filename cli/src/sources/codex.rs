@@ -69,6 +69,7 @@ impl SourceAdapter for CodexAdapter {
 
     fn collect(&self, ctx: &CollectContext) -> Result<SourceCollection, parser::ParseError> {
         let roots = self.resolve_roots(ctx.config);
+        let window = parser::local_date_to_utc_window(ctx.date)?;
 
         let mut merged_entries: HashMap<SessionMergeKey, Vec<CodexEntry>> = HashMap::new();
         for root in &roots {
@@ -80,12 +81,13 @@ impl SourceAdapter for CodexAdapter {
                 let Ok(entries) = codex::parse_codex_jsonl_file(&file) else {
                     continue;
                 };
-                let entries = codex::filter_entries_by_local_date(entries, ctx.date);
+                let entries: Vec<_> = entries
+                    .into_iter()
+                    .filter(|entry| {
+                        codex::entry_timestamp(entry).is_some_and(|ts| ts < window.end_utc)
+                    })
+                    .collect();
                 let summary = codex::summarize_codex_entries(&entries);
-                // Keep only sessions with actual conversation on the target date.
-                if summary.user_count == 0 && summary.assistant_count == 0 {
-                    continue;
-                }
 
                 let merge_key = if !summary.session_id.is_empty() {
                     SessionMergeKey::SessionId(summary.session_id)
@@ -118,18 +120,17 @@ impl SourceAdapter for CodexAdapter {
                 subagent_rollouts.push((own_id, entries));
                 continue;
             }
-            let summary = codex::summarize_codex_entries(&entries);
+            let history = analyzer::evidence::codex_source_messages(&entries, &[]);
+            let day_entries = codex::filter_entries_by_local_date(entries, ctx.date);
+            let summary = codex::summarize_codex_entries(&day_entries);
             if summary.user_count > 0 || summary.assistant_count > 0 {
-                sessions.push((summary, entries));
+                sessions.push((summary, day_entries, history));
             }
         }
 
-        sessions.sort_by(|(_, left_entries), (_, right_entries)| {
-            let left_first = left_entries.iter().filter_map(codex::entry_timestamp).min();
-            let right_first = right_entries
-                .iter()
-                .filter_map(codex::entry_timestamp)
-                .min();
+        sessions.sort_by(|(_, left_entries, _), (_, right_entries, _)| {
+            let left_first = activity_timestamps(left_entries).min();
+            let right_first = activity_timestamps(right_entries).min();
             match (left_first, right_first) {
                 (Some(left), Some(right)) => left.cmp(&right),
                 (Some(_), None) => std::cmp::Ordering::Less,
@@ -140,20 +141,21 @@ impl SourceAdapter for CodexAdapter {
 
         let interactive_ids: HashSet<&str> = sessions
             .iter()
-            .map(|(summary, _)| summary.session_id.as_str())
+            .map(|(summary, _, _)| summary.session_id.as_str())
             .collect();
         let attachment = attach_subagents(&subagent_rollouts, &interactive_ids, ctx.date);
 
-        let entry_count = sessions.iter().map(|(_, entries)| entries.len()).sum();
+        let entry_count = sessions.iter().map(|(_, entries, _)| entries.len()).sum();
         let mut collected = Vec::with_capacity(sessions.len());
-        for (summary, entries) in &sessions {
+        for (summary, entries, history) in &sessions {
             let lines = attachment
                 .runs_by_parent
                 .get(&summary.session_id)
                 .map(|runs| subagent::subagent_lines(runs))
                 .unwrap_or_default();
-            let task =
+            let mut task =
                 analyzer::build_codex_session_task(entries, &summary.session_id, Self::ID, &lines)?;
+            analyzer::context::prepend_reference(&mut task, history.clone(), window);
             collected.push(CollectedSession {
                 task,
                 first_activity: activity_timestamps(entries).min(),
@@ -165,11 +167,23 @@ impl SourceAdapter for CodexAdapter {
         Ok(SourceCollection {
             roots,
             fingerprint: SourceFingerprint {
+                input_digest: None,
                 session_count: collected.len(),
                 entry_count,
             },
             sessions: collected,
-            excluded: vec![(EXCLUDED_SUBAGENT, subagent_rollouts.len())],
+            excluded: vec![(
+                EXCLUDED_SUBAGENT,
+                subagent_rollouts
+                    .iter()
+                    .filter(|(_, entries)| {
+                        entries
+                            .iter()
+                            .filter_map(codex::entry_timestamp)
+                            .any(|ts| window.contains(ts))
+                    })
+                    .count(),
+            )],
             verbose_lines: vec![crate::messages::verbose::subagents(
                 self.display_name(),
                 attachment.attached,
@@ -192,7 +206,6 @@ struct SpawnInfo<'a> {
     parent_thread_id: Option<&'a str>,
     agent_path: Option<&'a str>,
     nickname: Option<&'a str>,
-    started: DateTime<Utc>,
 }
 
 /// Links each subagent rollout to its interactive parent by following
@@ -216,7 +229,12 @@ fn attach_subagents(
 
     let mut runs_by_parent: HashMap<String, Vec<SubagentRun>> = HashMap::new();
     let mut unattached = 0;
+    let window = crate::parser::local_date_to_utc_window(date).ok();
     for ((_, entries), info) in rollouts.iter().zip(&infos) {
+        let at = activity_timestamps(entries)
+            .filter(|ts| window.is_some_and(|w| w.contains(*ts)))
+            .min();
+        let Some(at) = at else { continue };
         let root = info
             .as_ref()
             .and_then(|info| info.parent_thread_id)
@@ -226,12 +244,6 @@ fn attach_subagents(
             continue;
         };
         let (task, result) = subagent_task_and_result(entries, info.agent_path);
-        let at = entries
-            .iter()
-            .filter(|entry| !matches!(entry, CodexEntry::SessionMeta { .. }))
-            .filter_map(codex::entry_timestamp)
-            .min()
-            .unwrap_or(info.started);
         runs_by_parent
             .entry(root.to_string())
             .or_default()
@@ -261,7 +273,6 @@ fn attach_subagents(
 fn own_spawn_info<'a>(entries: &'a [CodexEntry], own_id: &str) -> Option<SpawnInfo<'a>> {
     entries.iter().find_map(|entry| match entry {
         CodexEntry::SessionMeta {
-            timestamp,
             session_id,
             agent_nickname,
             parent_thread_id,
@@ -271,7 +282,6 @@ fn own_spawn_info<'a>(entries: &'a [CodexEntry], own_id: &str) -> Option<SpawnIn
             parent_thread_id: parent_thread_id.as_deref(),
             agent_path: agent_path.as_deref(),
             nickname: agent_nickname.as_deref(),
-            started: *timestamp,
         }),
         _ => None,
     })
@@ -373,6 +383,112 @@ mod tests {
                 include_automated: false,
             })
             .expect("collect")
+    }
+
+    #[test]
+    fn test_resumed_old_rollout_keeps_daily_activity_and_prior_evidence_across_roots() {
+        let base = unique_temp_dir("rwd_resumed_rollout");
+        let root_a = base.join("a");
+        let root_b = base.join("b");
+        let old = root_a.join("2025/12/31");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(root_b.join("2099/01/01")).unwrap();
+        let w = parser::local_date_to_utc_window(date()).unwrap();
+        let before = w.start_utc - chrono::Duration::seconds(1);
+        let today = w.start_utc;
+        let meta = serde_json::json!({"timestamp":before,"type":"session_meta","payload":{"id":"resumed","cwd":"/p"}});
+        let user = |at, text| serde_json::json!({"timestamp":at,"type":"event_msg","payload":{"type":"user_message","message":text}});
+        let assistant = |at, text| serde_json::json!({"timestamp":at,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]}});
+        let lines = [
+            meta.clone(),
+            assistant(before, "Use A because it is small"),
+            user(today, "Use B instead"),
+            user(w.end_utc, "FUTURE"),
+        ];
+        let log = lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let file = old.join("rollout-resumed.jsonl");
+        std::fs::write(&file, &log).unwrap();
+        std::fs::write(root_b.join("2099/01/01/rollout-copy.jsonl"), &log).unwrap();
+        // An old session with no target-day activity must stay out.
+        std::fs::write(
+            old.join("rollout-inactive.jsonl"),
+            [
+                meta.to_string().replace("resumed", "inactive"),
+                user(before, "INACTIVE").to_string(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        let collection = collect(vec![root_a, root_b]);
+        assert_eq!(collection.sessions.len(), 1);
+        assert_eq!(collection.fingerprint.entry_count, 2); // metadata and today's user
+        let session = &collection.sessions[0];
+        assert_eq!(session.first_activity, Some(today));
+        assert_eq!(session.last_activity, Some(today));
+        assert!(!session.task.prompt_text.contains("FUTURE"));
+        assert!(!session.task.prompt_text.contains("INACTIVE"));
+        let (_, catalog) = analyzer::evidence::annotate_messages(
+            &session.task.messages,
+            &session.task.evidence_sources,
+        );
+        assert_eq!(catalog.len(), 2);
+        assert!(catalog["m1"].is_reference);
+        assert_eq!(catalog["m1"].location.line, 2);
+        assert_eq!(catalog["m1"].timestamp, Some(before));
+        let current = catalog
+            .values()
+            .find(|source| !source.is_reference)
+            .unwrap();
+        assert_eq!(current.location.line, 3);
+        assert_eq!(current.text, "Use B instead");
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn test_today_subagent_resolves_through_an_inactive_old_parent() {
+        let base = unique_temp_dir("rwd_old_parent_chain");
+        let old = base.join("2025/12/31");
+        let current = base.join("2099/01/01");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&current).unwrap();
+        write_codex_rollout(&old.join("rollout-main.jsonl"), "main", "/p", "");
+        let inactive = old.join("rollout-middle.jsonl");
+        write_codex_rollout(
+            &inactive,
+            "middle",
+            "/p",
+            r#", "source":{"subagent":{"thread_spawn":{"parent_thread_id":"main","agent_path":"/middle"}}}"#,
+        );
+        let log = std::fs::read_to_string(&inactive)
+            .unwrap()
+            .replace("2099-01-01", "2098-12-30");
+        std::fs::write(&inactive, log).unwrap();
+        let leaf = current.join("rollout-leaf.jsonl");
+        write_codex_rollout(
+            &leaf,
+            "leaf",
+            "/p",
+            r#", "source":{"subagent":{"thread_spawn":{"parent_thread_id":"middle","agent_path":"/leaf"}}}"#,
+        );
+        let log = std::fs::read_to_string(&leaf)
+            .unwrap()
+            .replace("done", "LEAF_RESULT");
+        std::fs::write(&leaf, log).unwrap();
+        let collection = collect(vec![base.clone()]);
+        assert_eq!(collection.sessions.len(), 1);
+        assert_eq!(collection.excluded, vec![(EXCLUDED_SUBAGENT, 1)]);
+        assert!(
+            collection.sessions[0]
+                .task
+                .prompt_text
+                .contains("LEAF_RESULT")
+        );
+        assert_eq!(collection.fingerprint.entry_count, 3);
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     fn write_codex_rollout(file: &std::path::Path, session_id: &str, cwd: &str, extra_meta: &str) {
@@ -600,6 +716,7 @@ mod tests {
         assert_eq!(
             collection.fingerprint,
             SourceFingerprint {
+                input_digest: None,
                 session_count: 1,
                 entry_count: 3,
             }
@@ -701,6 +818,7 @@ mod tests {
         assert_eq!(
             collection.fingerprint,
             SourceFingerprint {
+                input_digest: None,
                 session_count: 1,
                 entry_count: 5,
             }

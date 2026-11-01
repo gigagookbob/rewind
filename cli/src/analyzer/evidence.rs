@@ -10,6 +10,8 @@ use std::collections::HashMap;
 /// Only visible user/assistant text, before log compaction. Never tool output.
 #[derive(Debug, Clone)]
 pub struct SourceMessage {
+    pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    pub is_reference: bool,
     /// One-based position in SessionTask::messages, including non-speech entries.
     pub message_index: usize,
     pub role: String,
@@ -80,6 +82,8 @@ fn claude_source_message(entry: &LogEntry) -> Option<SourceMessage> {
     }
     let (role, rendered_text) = extract_entry_text(entry)?;
     Some(SourceMessage {
+        timestamp: crate::parser::claude::entry_timestamp(entry),
+        is_reference: false,
         message_index: 0,
         role: role.into(),
         text,
@@ -118,6 +122,8 @@ fn codex_source_message(entry: &CodexEntry) -> Option<SourceMessage> {
     }
     let (role, rendered_text) = codex_role_text(entry)?;
     Some(SourceMessage {
+        timestamp: crate::parser::codex::entry_timestamp(entry),
+        is_reference: false,
         message_index: 0,
         role,
         text: text.clone(),
@@ -175,14 +181,15 @@ pub fn validate(
         .sessions
         .retain(|session| session.session_id == session_id);
     for session in &mut result.sessions {
-        session
-            .decisions
-            .retain_mut(|item| resolve(&mut item.evidence, catalog) && has_user(&item.evidence));
-        session
-            .til
-            .retain_mut(|item| resolve(&mut item.evidence, catalog) && has_user(&item.evidence));
+        session.decisions.retain_mut(|item| {
+            resolve(&mut item.evidence, catalog) && has_target_user(&item.evidence)
+        });
+        session.til.retain_mut(|item| {
+            resolve(&mut item.evidence, catalog) && has_target_user(&item.evidence)
+        });
         session.corrections.retain_mut(|item| {
             resolve(&mut item.evidence, catalog)
+                && has_target_user(&item.evidence)
                 && correction_order_matches(&item.evidence, catalog)
         });
     }
@@ -231,8 +238,8 @@ pub fn validate_summary(
     validate(result, session_id, catalog);
 }
 
-fn has_user(evidence: &[Evidence]) -> bool {
-    evidence.iter().any(|e| e.role == "USER")
+fn has_target_user(evidence: &[Evidence]) -> bool {
+    evidence.iter().any(|e| e.role == "USER" && !e.is_reference)
 }
 
 fn correction_order_matches(
@@ -263,6 +270,8 @@ fn resolve(evidence: &mut [Evidence], catalog: &HashMap<String, SourceMessage>) 
         // Discard model-provided attribution even when a later check fails.
         proof.location = None;
         proof.role.clear();
+        proof.timestamp = None;
+        proof.is_reference = false;
         let Some(source) = catalog.get(&proof.message_id) else {
             return false;
         };
@@ -271,6 +280,8 @@ fn resolve(evidence: &mut [Evidence], catalog: &HashMap<String, SourceMessage>) 
         }
         proof.location = Some(source.location.clone());
         proof.role.clone_from(&source.role);
+        proof.timestamp = source.timestamp;
+        proof.is_reference = source.is_reference;
     }
     true
 }
@@ -303,12 +314,13 @@ pub fn revalidate_cached_session(
         .map(|item| &mut item.evidence)
         .chain(session.til.iter_mut().map(|item| &mut item.evidence))
     {
-        if !cached_evidence_matches(evidence, &catalog) || !has_user(evidence) {
+        if !cached_evidence_matches(evidence, &catalog) || !has_target_user(evidence) {
             clear_attribution(evidence);
         }
     }
     for item in &mut session.corrections {
         if !cached_evidence_matches(&item.evidence, &catalog)
+            || !has_target_user(&item.evidence)
             || !correction_order_matches(&item.evidence, &catalog)
         {
             clear_attribution(&mut item.evidence);
@@ -326,6 +338,8 @@ fn cached_evidence_matches(
             catalog.get(&proof.message_id).is_some_and(|source| {
                 proof.location.as_ref() == Some(&source.location)
                     && proof.role == source.role
+                    && proof.timestamp == source.timestamp
+                    && proof.is_reference == source.is_reference
                     && quote_matches(proof, source)
             })
         })
@@ -335,6 +349,8 @@ fn clear_attribution(evidence: &mut [Evidence]) {
     for proof in evidence {
         proof.location = None;
         proof.role.clear();
+        proof.timestamp = None;
+        proof.is_reference = false;
     }
 }
 
@@ -344,6 +360,8 @@ mod tests {
 
     fn source(role: &str, text: &str, line: usize) -> SourceMessage {
         SourceMessage {
+            timestamp: None,
+            is_reference: false,
             message_index: 1,
             role: role.into(),
             text: text.into(),
@@ -363,6 +381,44 @@ mod tests {
             .to_string(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn test_prior_context_requires_today_user_and_keeps_correction_dates() {
+        let mut old = source("ASSISTANT", "Use A", 4);
+        old.timestamp = Some("2026-10-31T14:59:00Z".parse().unwrap());
+        old.is_reference = true;
+        let mut today = source("USER", "Use B instead", 10);
+        today.timestamp = Some("2026-10-31T15:00:00Z".parse().unwrap());
+        today.message_index = 2;
+        let catalog = HashMap::from([("m1".into(), old.clone()), ("m2".into(), today)]);
+        let mut result = analysis_with(serde_json::json!([
+            {"message_id":"m1","quote":"Use A","is_reference":false}
+        ]));
+        result.sessions[0].corrections = serde_json::from_value(serde_json::json!([
+            {"kind":"preference_change","model_said":"Use A","user_corrected":"Use B instead","evidence":[
+                {"message_id":"m1","quote":"Use A"},{"message_id":"m2","quote":"Use B instead"}
+            ]}
+        ])).unwrap();
+        validate(&mut result, "s1", &catalog);
+        assert!(result.sessions[0].decisions.is_empty());
+        assert!(result.sessions[0].til.is_empty());
+        let correction = &result.sessions[0].corrections[0];
+        assert_eq!(correction.kind, CorrectionKind::PreferenceChange);
+        assert!(correction.evidence[0].is_reference);
+        assert_eq!(correction.evidence[0].timestamp, old.timestamp);
+        assert_eq!(correction.evidence[0].location, Some(old.location));
+        let rendered = crate::output::display_evidence(&correction.evidence);
+        assert!(rendered.contains("2026-10-31T14:59:00+00:00 Reference / 이전 참고"));
+        assert!(rendered.contains("2026-10-31T15:00:00+00:00 Target day / 대상 날짜"));
+        // Even a real old USER quote cannot create today's decision or TIL.
+        let mut old_user = source("USER", "I learned A", 2);
+        old_user.is_reference = true;
+        let mut result =
+            analysis_with(serde_json::json!([{"message_id":"m1","quote":"I learned A"}]));
+        validate(&mut result, "s1", &HashMap::from([("m1".into(), old_user)]));
+        assert!(result.sessions[0].decisions.is_empty());
+        assert!(result.sessions[0].til.is_empty());
     }
 
     #[test]
@@ -809,6 +865,8 @@ mod tests {
     #[test]
     fn test_verified_quotes_resolve_local_location_and_drop_invented_insights() {
         let sources = vec![SourceMessage {
+            timestamp: None,
+            is_reference: false,
             message_index: 1,
             role: "USER".into(),
             text: "함수 하나로 충분합니다".into(),

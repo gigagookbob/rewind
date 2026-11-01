@@ -312,6 +312,8 @@ fn evidence_sources(steps: &[&TranscriptStep]) -> Vec<analyzer::evidence::Source
             }
             let (role, rendered_text) = messages.first()?;
             Some(analyzer::evidence::SourceMessage {
+                timestamp: step.created_at,
+                is_reference: false,
                 message_index,
                 role: role.clone(),
                 text: text.into(),
@@ -353,6 +355,9 @@ impl SourceAdapter for AntigravityAdapter {
         let mut stats = ScanStats::default();
         let mut conversations = load_conversations(&roots, window.start_utc, &mut stats);
         for conversation in conversations.values_mut() {
+            conversation
+                .steps
+                .retain(|step| step.created_at.is_some_and(|ts| ts < window.end_utc));
             merge_steps(&mut conversation.steps);
         }
         let histories = if settings.include_print_mode {
@@ -401,6 +406,18 @@ impl SourceAdapter for AntigravityAdapter {
                 last_activity: day_steps.iter().filter_map(|step| step.created_at).max(),
                 token_usage: None,
             });
+            if let Some(session) = sessions.last_mut() {
+                let history: Vec<_> = conversation
+                    .steps
+                    .iter()
+                    .filter(|step| is_conversation_step(step))
+                    .collect();
+                analyzer::context::prepend_reference(
+                    &mut session.task,
+                    evidence_sources(&history),
+                    window,
+                );
+            }
         }
         sessions.sort_by_key(|session| session.first_activity);
 
@@ -414,6 +431,7 @@ impl SourceAdapter for AntigravityAdapter {
         Ok(SourceCollection {
             roots,
             fingerprint: SourceFingerprint {
+                input_digest: None,
                 session_count: sessions.len(),
                 entry_count,
             },
@@ -657,6 +675,7 @@ mod tests {
         assert_eq!(
             collection.fingerprint,
             SourceFingerprint {
+                input_digest: None,
                 session_count: 1,
                 entry_count: 3,
             }
@@ -756,7 +775,14 @@ mod tests {
         let collection = collect(vec![layout.app()]);
 
         let session = &collection.sessions[0];
-        assert!(!session.task.prompt_text.contains("BEFORE_MARKER"));
+        assert!(session.task.prompt_text.contains("[REFERENCE "));
+        let (_, catalog) = analyzer::evidence::annotate_messages(
+            &session.task.messages,
+            &session.task.evidence_sources,
+        );
+        assert_eq!(catalog["m1"].text, "BEFORE_MARKER");
+        assert!(catalog["m1"].is_reference);
+        assert_eq!(catalog["m1"].location.line, 1);
         assert!(!session.task.prompt_text.contains("AFTER_MARKER"));
         let ts = |s: String| s.parse::<DateTime<Utc>>().expect("timestamp");
         assert_eq!(session.first_activity, Some(ts(local_ts(15, 0, 0))));

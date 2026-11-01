@@ -23,4 +23,4 @@ let chunks = split_into_chunks(messages, token_budget, char_budget)?;
 
 검증 명령은 `cargo test --offline --locked`, `cargo build --offline --locked`, `cargo clippy --offline --locked --all-targets -- -D warnings`, `cargo fmt --check`입니다. 합성 입력과 순수 함수로 A에서 B로 변경, 실패 해결, 마지막 정정, 큰 발언, 순서, 호출 대상 수와 입력 제한을 검사합니다. 실제 모델의 의미 보존 품질은 검증하지 않습니다.
 
-실제 사용자 로그와 비밀값을 외부로 전송하지 않습니다. 여러 날 수집, 일일 노트 덮어쓰기, 전체 마스킹 개선과 탐색 기능은 별도 범위입니다. 기존 캐시는 자동 재분석하지 않으며 새 동작은 `--no-cache`로 명시적으로 적용할 수 있습니다.
+실제 사용자 로그와 비밀값을 외부로 전송하지 않습니다. 여러 날 수집, 일일 노트 덮어쓰기, 전체 마스킹 개선과 탐색 기능은 별도 범위입니다. 이 명세 당시의 캐시 정책은 이후 `SPEC-multi-day.md`의 입력 지문 정책으로 대체했습니다. 여러 날 세션 정책이 없는 구 캐시는 다음 분석 명령에서 한 번 갱신합니다.

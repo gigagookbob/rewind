@@ -435,7 +435,7 @@ pub fn extract_session_ids(entries: &[LogEntry]) -> Vec<String> {
 
 /// Conservative estimate for system prompt tokens.
 /// Includes the evidence and correction classification instructions, with margin.
-pub const SYSTEM_PROMPT_ESTIMATED_TOKENS: u64 = 2_600;
+pub const SYSTEM_PROMPT_ESTIMATED_TOKENS: u64 = 3_000;
 
 /// Rough token estimate for text.
 /// Korean syllables are ~1 token each, so char_count / 2 is a conservative estimate.

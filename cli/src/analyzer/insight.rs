@@ -97,6 +97,10 @@ pub struct Correction {
 /// A quotation proposed by the model. The executor resolves its local location.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Evidence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub is_reference: bool,
     pub message_id: String,
     pub quote: String,
     #[serde(default)]

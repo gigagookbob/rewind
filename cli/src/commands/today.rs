@@ -414,11 +414,11 @@ mod tests {
             original.sources[0].display_name = "Claude Code";
             original.sources[0].collection.sessions[0].task.session_id = "s1".into();
         }
-        // Only a physical line changes; the normal cache reuse checks still pass.
+        // A physical line change now invalidates the versioned input digest.
         std::fs::write(&path, format!("\n{log}")).unwrap();
         let current = collect_sources(&adapters, &ctx);
         std::fs::remove_dir_all(&base).unwrap();
-        assert!(cache::fingerprints_match(
+        assert!(!cache::fingerprints_match(
             &cached,
             &current.fingerprint_table()
         ));

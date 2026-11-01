@@ -154,7 +154,7 @@ AI는 입력에 붙인 `m1` 같은 발언 ID와 원문 인용만 반환합니다
 
 기존 캐시는 그대로 읽습니다. 새 필드가 없는 결정과 TIL은 근거 미확인으로, 기존 정정은 분류 미확인으로 표시하며 근거를 소급해서 만들지 않습니다.
 
-`rwd today`는 캐시를 표시하기 전에 현재 수집한 같은 입력 소스와 세션의 발언 ID, 발언자, 파일 경로, 줄 번호와 인용을 대조합니다. 하나라도 맞지 않으면 해당 항목의 모든 근거를 미확인으로 표시하고, 정정은 분류도 미확인으로 바꿉니다. 정정의 대화 순서도 다시 검사합니다. 이 검사는 로컬에서 끝나며, 이 불일치만으로 외부 AI를 다시 호출하지 않습니다. 표시용 결과만 조정하고 저장된 캐시 파일은 유지합니다.
+`rwd today`는 캐시를 표시하기 전에 현재 수집한 같은 입력 소스와 세션의 발언 ID, 발언자, 파일 경로, 줄 번호와 인용을 대조합니다. 하나라도 맞지 않으면 해당 항목의 모든 근거를 미확인으로 표시하고, 정정은 분류도 미확인으로 바꿉니다. 정정의 대화 순서도 다시 검사합니다. 근거 재검사는 로컬에서 끝나며 표시용 결과만 조정합니다. 분석 입력이 바뀌면 아래의 여러 날 세션 캐시 정책에 따라 재분석합니다.
 
 기존 날짜를 새 형식으로 분석하려면 기존 옵션인 `rwd today --date YYYY-MM-DD --no-cache`를 사용할 수 있습니다. 이 명령은 설정된 외부 AI를 호출합니다.
 
@@ -166,11 +166,21 @@ AI는 입력에 붙인 `m1` 같은 발언 ID와 원문 인용만 반환합니다
 
 중간 요약 호출은 실행 시도당 최대 세 번이며 각 출력 요청 상한은 2,000토큰입니다. 입력은 호출당 추정 30,000토큰과 공급자의 분당 입력 한도 중 작은 값 안에서 프롬프트, 조각 번호, 역할과 발언 ID를 포함합니다. Codex는 기존 문자 상한도 함께 적용합니다. 긴 발언은 나눈 모든 부분에 원래 ID를 유지합니다. 토큰 수는 문자 수로 추정하므로 공급자의 실제 계산과 다를 수 있습니다.
 
-합친 요약이 최종 분석의 입력 제한을 넘거나 요약이 비어 있으면 내용을 잘라 성공으로 처리하지 않고 오류를 반환합니다. 기존 재시도는 최대 한 번이므로 재시도까지 발생하면 중간 요약은 최대 여섯 번, 최종 분석은 최대 두 번 호출할 수 있습니다. 짧은 세션은 기존처럼 직접 분석합니다. 기존 캐시는 자동 재분석하지 않으며 새 동작으로 다시 분석하려면 `--no-cache`가 필요합니다.
+합친 요약이 최종 분석의 입력 제한을 넘거나 요약이 비어 있으면 내용을 잘라 성공으로 처리하지 않고 오류를 반환합니다. 기존 재시도는 최대 한 번이므로 재시도까지 발생하면 중간 요약은 최대 여섯 번, 최종 분석은 최대 두 번 호출할 수 있습니다. 짧은 세션은 기존처럼 직접 분석합니다. 이전 맥락 정책이 없는 구 캐시는 다음 분석 명령에서 한 번 갱신합니다. 그 뒤에도 강제로 다시 분석하려면 `--no-cache`를 사용합니다.
 
 원문 ID와 인용을 중간 요약에서 잃으면 해당 근거가 필요한 항목은 제외될 수 있습니다. 로컬 테스트는 처리 범위, 순서와 원문 대조를 확인하며 실제 모델이 결론을 빠짐없이 요약하는지는 보장하지 않습니다. 기존 중간 요약 경로의 비밀값 마스킹 누락은 별도 개선 대상입니다.
 
 요약을 거친 근거는 실제로 선택한 조각 안의 같은 발언 부분에도 인용이 있어야 합니다. 같은 긴 발언의 제외된 부분을 인용하거나, 다른 발언에 적힌 ID를 빌려 원문 위치를 붙이지 않습니다. 직접 분석도 재시도 안내와 마스킹을 포함한 최종 입력 길이를 검사하며, 응답에 해당 세션이 없으면 오류를 반환합니다.
+
+### 여러 날 이어지는 세션
+
+Codex는 시작 날짜 폴더에 그대로 남아 있는 세션도 찾아 당일 재개한 발언을 수집합니다. 실제 발언 시각으로 날짜를 나누며, 당일 활동이 없는 세션과 대상 날짜 이후 발언은 포함하지 않습니다. 과거 폴더를 모두 읽으므로 로그가 많이 쌓이면 수집 시간이 늘어날 수 있습니다.
+
+Claude Code, Codex와 Antigravity는 같은 세션의 이전 사용자와 답변 중 최근 12개, 참고 표시를 포함해 합계 4,000자 이내를 분석에 추가합니다. 공간이 부족한 발언은 끝부분을 남기며, 더 오래된 이유나 결정을 놓칠 수 있습니다. 참고 시각은 UTC로 표시합니다. 결정, 학습과 정정에는 당일 사용자 발언 근거를 요구하고 과거 선택을 오늘의 새 결정으로 반복하지 않도록 지시합니다. 과거 답변을 오늘 정정했다면 두 근거의 시각과 참고 구분을 출력합니다. 의미 해석과 최종 선택의 정확도는 모델에 의존합니다.
+
+세션 수, 미리보기의 발언 수와 활동 시각, Claude 사용량은 당일 자료만 셉니다. 예상 분석 토큰에는 이전 참고가 포함됩니다. 긴 입력은 기존 첫 조각과 마지막 두 조각을 선택하므로 당일 최종 결론을 우선 보존합니다. 입력 한도가 작으면 이전 참고와 초반 당일 내용 일부가 빠질 수 있으며, 기존 부분 분석 표시가 남습니다.
+
+`today`, `summary`와 `slack`은 현재 분석 메시지와 근거 위치, 시각의 버전 해시를 비교합니다. 이 정책이 없는 구 캐시와 선택한 참고 내용이 바뀐 캐시는 다음 명령 실행 때 재분석하며 설정된 외부 AI를 호출합니다. 미래 발언이나 선택 범위 밖의 과거 내용만 추가된 경우에는 재분석하지 않습니다. 캐시 파일 형식과 일일 노트 저장 위치는 유지합니다.
 
 ### Preview with `--dry-run`
 
@@ -203,7 +213,7 @@ Codex session filtering:
 
 Codex Desktop user `response_item` / `input_text` blocks are also supported. App-injected context is excluded, and legacy `event_msg` echoes are counted once.
 
-Codex messages send only the text itself: the typed `message` or `input_text` for user turns and the `output_text` blocks for answers. Message ids, `phase`/`status` values, and image or file references are not sent. The session's `[META]` line keeps only the working directory, git branch and repository URL, session id, model provider, and source; Codex's built-in instructions and account ids are not sent. Days analyzed before this change keep their cached result; run `rwd today --no-cache --date <date>` to redo one.
+Codex messages send only the text itself: the typed `message` or `input_text` for user turns and the `output_text` blocks for answers. Message ids, `phase`/`status` values, and image or file references are not sent. The session's `[META]` line keeps only the working directory, git branch and repository URL, session id, model provider, and source; Codex's built-in instructions and account ids are not sent. Cached inputs are checked against the multi-day context policy described above; `rwd today --no-cache --date <date>` forces a fresh analysis.
 
 Antigravity sessions:
 - Read by default from `~/.gemini/antigravity-cli/brain` (agy CLI), `~/.gemini/antigravity/brain` (Antigravity app), and `~/.gemini/antigravity-ide/brain` (Antigravity IDE). In WSL, the same folders under Windows homes are also checked.

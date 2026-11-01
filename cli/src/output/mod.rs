@@ -46,12 +46,27 @@ pub fn display_evidence(evidence: &[Evidence]) -> String {
     let mut output = String::new();
     for proof in evidence {
         if let Some(location) = &proof.location {
+            let time = proof
+                .timestamp
+                .map(|ts| {
+                    format!(
+                        " {} {}",
+                        ts.to_rfc3339(),
+                        if proof.is_reference {
+                            "Reference / 이전 참고"
+                        } else {
+                            "Target day / 대상 날짜"
+                        }
+                    )
+                })
+                .unwrap_or_default();
             output.push_str(&format!(
-                "    Evidence / 근거: {} {}:{} [{}]\n    Quote / 발언: {}\n",
+                "    Evidence / 근거: {} {}:{} [{}]{}\n    Quote / 발언: {}\n",
                 plain(&proof.role),
                 plain(&location.path.display().to_string()),
                 location.line,
                 plain(&proof.message_id),
+                time,
                 plain(&proof.quote)
             ));
         }
@@ -93,6 +108,8 @@ mod tests {
     #[test]
     fn test_evidence_display_cannot_inject_markdown_or_terminal_controls() {
         let proof = Evidence {
+            timestamp: None,
+            is_reference: false,
             message_id: "m1".into(),
             role: "USER".into(),
             quote: "<script>\n[click](https://invalid.test)\u{1b}[31m".into(),

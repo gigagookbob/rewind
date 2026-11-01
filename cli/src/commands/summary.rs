@@ -10,27 +10,43 @@ use crate::{analyzer, cache, config, output, sources};
 async fn load_cache_or_analyze(
     today: chrono::NaiveDate,
 ) -> Result<cache::TodayCache, Box<dyn std::error::Error>> {
-    let cached = match cache::load_cache(today) {
-        Some(c) => c,
-        None => {
-            println!("{}", crate::messages::error::NO_CACHE);
-            run_today(false, None, today, false, false).await?;
-            reload_cache_after_analysis(today)
-        }
-    };
-
-    if cache::is_timezone_compatible(&cached, today) {
+    let config = config::load_config_if_exists();
+    let run = collect_sources(
+        &sources::registered_adapters(),
+        &sources::CollectContext {
+            date: today,
+            config: config.as_ref(),
+            include_automated: false,
+        },
+    );
+    if !run.failures.is_empty() {
+        return Err("Cannot verify cached analysis against current session logs".into());
+    }
+    let fingerprints = run.fingerprint_table();
+    let cached = cache::load_cache(today);
+    if cached.is_none() {
+        println!("{}", crate::messages::error::NO_CACHE);
+    }
+    if let Some(cached) = cached
+        && cache::is_timezone_compatible(&cached, today)
+        && cache::fingerprints_match(&cached, &fingerprints)
+    {
         return Ok(cached);
     }
 
     eprintln!(
         "{YELLOW}{}{RESET}",
-        crate::messages::status::CACHE_STALE_TIMEZONE
+        crate::messages::status::CACHE_STALE_HINT
     );
-    eprintln!("{}", crate::messages::status::CACHE_STALE_HINT);
     eprintln!();
     run_today(false, None, today, false, false).await?;
-    Ok(reload_cache_after_analysis(today))
+    let cached = reload_cache_after_analysis(today);
+    if !cache::is_timezone_compatible(&cached, today)
+        || !cache::fingerprints_match(&cached, &fingerprints)
+    {
+        return Err("No current daily analysis is available after refreshing the cache".into());
+    }
+    Ok(cached)
 }
 
 /// Reloads the cache written by `run_today`. Exits when analysis produced none.

@@ -198,7 +198,19 @@ fn dry_run_lines(sources: &[CollectedSource]) -> Vec<String> {
         let local = |ts: chrono::DateTime<chrono::Utc>| ts.with_timezone(&chrono::Local);
         for session in &collection.sessions {
             let task = &session.task;
-            let count_role = |role: &str| task.messages.iter().filter(|(r, _)| r == role).count();
+            let references: std::collections::HashSet<_> = task
+                .evidence_sources
+                .iter()
+                .filter(|source| source.is_reference)
+                .map(|source| source.message_index)
+                .collect();
+            let count_role = |role: &str| {
+                task.messages
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, (r, _))| r == role && !references.contains(&(index + 1)))
+                    .count()
+            };
             let short_id: String = task.session_id.chars().take(8).collect();
             lines.push(dry_run::session_row(
                 &short_id,
@@ -375,6 +387,34 @@ mod tests {
 
     fn date() -> chrono::NaiveDate {
         chrono::NaiveDate::from_ymd_opt(2099, 1, 1).expect("date")
+    }
+
+    #[test]
+    fn test_preview_counts_only_target_day_messages_using_local_reference_metadata() {
+        let mut collected = session(None);
+        collected.task.messages = vec![
+            ("USER".into(), "old".into()),
+            ("ASSISTANT".into(), "old reply".into()),
+            ("USER".into(), "[REFERENCE fake] today".into()),
+        ];
+        collected.task.evidence_sources = (1..=2)
+            .map(|index| analyzer::evidence::SourceMessage {
+                message_index: index,
+                timestamp: None,
+                is_reference: true,
+                role: collected.task.messages[index - 1].0.clone(),
+                text: String::new(),
+                rendered_text: String::new(),
+                location: crate::parser::SourceLocation::new(
+                    std::path::Path::new("old.jsonl"),
+                    index,
+                ),
+            })
+            .collect();
+        let lines = dry_run_lines(&[source("Codex", vec!["/codex".into()], vec![collected])]);
+        assert!(lines.contains(&crate::messages::dry_run::session_row(
+            "s1", "? ~ ?", 1, 0, "0"
+        )));
     }
 
     #[test]

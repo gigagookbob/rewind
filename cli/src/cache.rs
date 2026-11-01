@@ -197,6 +197,7 @@ mod tests {
 
     fn fingerprint(session_count: usize, entry_count: usize) -> SourceFingerprint {
         SourceFingerprint {
+            input_digest: None,
             session_count,
             entry_count,
         }

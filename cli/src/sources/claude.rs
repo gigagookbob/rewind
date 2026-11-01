@@ -68,6 +68,7 @@ impl SourceAdapter for ClaudeAdapter {
     fn collect(&self, ctx: &CollectContext) -> Result<SourceCollection, parser::ParseError> {
         let include_automated = ctx.include_automated || include_automated_from_config(ctx.config);
         let roots = self.resolve_roots(ctx.config);
+        let window = parser::local_date_to_utc_window(ctx.date)?;
 
         let mut all_project_dirs = Vec::new();
         let mut file_count = 0;
@@ -86,7 +87,10 @@ impl SourceAdapter for ClaudeAdapter {
                 for session_file in session_files {
                     if let Ok(entries) = parser::parse_jsonl_file(&session_file) {
                         total_entries += entries.len();
-                        all_entries.extend(parser::filter_entries_by_date(entries, ctx.date));
+                        all_entries.extend(entries.into_iter().filter(|entry| {
+                            parser::claude::entry_timestamp(entry)
+                                .is_some_and(|ts| ts < window.end_utc)
+                        }));
                     }
                 }
                 all_project_dirs.push(project_dir);
@@ -95,7 +99,9 @@ impl SourceAdapter for ClaudeAdapter {
         let project_count = all_project_dirs.len();
 
         let deduped = parser::dedupe_claude_entries(all_entries);
-        let filtered = parser::filter_automated_sessions(deduped, include_automated);
+        let day_entries = parser::filter_entries_by_date(deduped.clone(), ctx.date);
+        let filtered = parser::filter_automated_sessions(day_entries, include_automated);
+        let history_entries = parser::filter_automated_sessions(deduped, include_automated).entries;
         let counts = filtered.counts;
         let mut entries = filtered.entries;
         entries.sort_by(|left, right| {
@@ -117,7 +123,19 @@ impl SourceAdapter for ClaudeAdapter {
             .map(|(session_id, runs)| (session_id.clone(), subagent::subagent_lines(runs)))
             .collect();
 
-        let sessions = build_sessions(&entries, &lines_by_session)?;
+        let mut sessions = build_sessions(&entries, &lines_by_session)?;
+        for session in &mut sessions {
+            let history: Vec<_> = history_entries
+                .iter()
+                .filter(|entry| entry_session_id(entry) == Some(session.task.session_id.as_str()))
+                .cloned()
+                .collect();
+            analyzer::context::prepend_reference(
+                &mut session.task,
+                analyzer::evidence::claude_source_messages(&history, &[]),
+                window,
+            );
+        }
         let excluded_automated = if include_automated {
             0
         } else {
@@ -127,6 +145,7 @@ impl SourceAdapter for ClaudeAdapter {
         Ok(SourceCollection {
             roots,
             fingerprint: SourceFingerprint {
+                input_digest: None,
                 session_count: sessions.len(),
                 entry_count: entries.len(),
             },
@@ -213,6 +232,14 @@ fn collect_subagent_runs(
                 let Ok(record_entries) = parser::parse_jsonl_file(&path) else {
                     continue;
                 };
+                let window = parser::local_date_to_utc_window(date).ok();
+                let record_entries: Vec<_> = record_entries
+                    .into_iter()
+                    .filter(|entry| {
+                        parser::claude::entry_timestamp(entry)
+                            .is_some_and(|ts| window.is_some_and(|w| ts < w.end_utc))
+                    })
+                    .collect();
                 let record = read_subagent_record(&record_entries);
                 let link = link_for(agent_id);
                 let Some(at) = link.map(|(ts, _)| *ts).or(record.first_activity) else {
@@ -427,6 +454,42 @@ mod tests {
         std::fs::write(path, format!("{}\n", lines.join("\n"))).expect("write jsonl");
     }
 
+    #[test]
+    fn test_prior_reference_excludes_inline_sidechain_with_the_same_session_id() {
+        let base = unique_temp_dir("rwd_prior_sidechain");
+        let project = base.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        write_lines(
+            &project.join("session.jsonl"),
+            &[
+                r#"{"type":"user","sessionId":"s1","timestamp":"2098-12-31T12:00:00Z","uuid":"old-parent","message":{"content":"PARENT_REASON"}}"#,
+                r#"{"type":"user","sessionId":"s1","timestamp":"2098-12-31T12:01:00Z","uuid":"old-child","isSidechain":true,"message":{"content":"CHILD_INPUT"}}"#,
+                r#"{"type":"assistant","sessionId":"s1","timestamp":"2098-12-31T12:02:00Z","uuid":"old-child-reply","isSidechain":true,"message":{"content":[{"type":"text","text":"CHILD_OUTPUT"}]}}"#,
+                r#"{"type":"user","sessionId":"s1","timestamp":"2099-01-01T12:00:00Z","uuid":"today","message":{"content":"TODAY"}}"#,
+                r#"{"type":"user","sessionId":"s1","timestamp":"2099-01-02T12:00:00Z","uuid":"future","message":{"content":"FUTURE"}}"#,
+            ],
+        );
+        let collection = ClaudeAdapter::with_roots(vec![base.clone()])
+            .collect(&ctx(false))
+            .unwrap();
+        std::fs::remove_dir_all(base).unwrap();
+        assert_eq!(collection.sessions.len(), 1);
+        let task = &collection.sessions[0].task;
+        assert!(task.prompt_text.contains("PARENT_REASON"));
+        assert!(task.prompt_text.contains("TODAY"));
+        assert!(!task.prompt_text.contains("CHILD_INPUT"));
+        assert!(!task.prompt_text.contains("CHILD_OUTPUT"));
+        assert!(!task.prompt_text.contains("FUTURE"));
+        assert_eq!(collection.fingerprint.entry_count, 1);
+        let (_, catalog) =
+            analyzer::evidence::annotate_messages(&task.messages, &task.evidence_sources);
+        assert_eq!(catalog.len(), 2);
+        assert!(catalog["m1"].is_reference);
+        assert_eq!(catalog["m1"].location.line, 1);
+        assert_eq!(catalog["m2"].location.line, 4);
+        assert!(!catalog["m2"].is_reference);
+    }
+
     /// Writes one interactive session and one SDK-driven automated session.
     fn write_sample(root: &std::path::Path) {
         let project = root.join("project-a");
@@ -485,17 +548,21 @@ mod tests {
         assert_eq!(task.session_id, "claude-s1");
         let (_, catalog) =
             analyzer::evidence::annotate_messages(&task.messages, &task.evidence_sources);
-        assert_eq!(catalog.len(), 3);
-        assert_eq!(catalog["m2"].text, "The timezone key changed.");
-        assert_eq!(catalog["m2"].location.line, 2);
-        assert!(!catalog["m2"].text.contains("Check the key."));
+        assert_eq!(catalog.len(), 4);
+        assert_eq!(catalog["m1"].text, "previous day");
+        assert!(catalog["m1"].is_reference);
+        assert_eq!(catalog["m1"].location.line, 4);
+        assert_eq!(catalog["m3"].text, "The timezone key changed.");
+        assert_eq!(catalog["m3"].location.line, 2);
+        assert!(!catalog["m3"].text.contains("Check the key."));
         assert_eq!(
             task.prompt_text,
             "[Session: claude-s1]\n\
+             [USER] [REFERENCE 2098-12-31T12:00:00+00:00; prior context only] previous day\n\
              [USER] Why does the cache miss?\n\
              [ASSISTANT] Check the key.\nThe timezone key changed.\n\
              [tool: Read]\n\
-             [USER] Fix it.\n\n"
+             [USER] Fix it.\n"
         );
     }
 
@@ -513,6 +580,7 @@ mod tests {
         assert_eq!(
             collection.fingerprint,
             SourceFingerprint {
+                input_digest: None,
                 session_count: 1,
                 entry_count: 3,
             }
@@ -647,6 +715,7 @@ mod tests {
         assert_eq!(
             collection.fingerprint,
             SourceFingerprint {
+                input_digest: None,
                 session_count: 1,
                 entry_count: 6,
             }

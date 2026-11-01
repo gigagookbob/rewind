@@ -63,6 +63,9 @@ pub struct CollectedSession {
 /// Per-source counts stored in the cache to detect new activity.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceFingerprint {
+    /// Versioned identity of the actual analysis input, including prior context.
+    #[serde(default)]
+    pub input_digest: Option<String>,
     pub session_count: usize,
     pub entry_count: usize,
 }
