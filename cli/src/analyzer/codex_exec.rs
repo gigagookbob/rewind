@@ -318,6 +318,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_retrospective_schema_requires_event_specific_evidence_and_known_states() {
+        let schema: serde_json::Value = serde_json::from_str(ANALYSIS_OUTPUT_SCHEMA).unwrap();
+        let item = &schema["properties"]["sessions"]["items"];
+        let props = &item["properties"];
+        assert!(props.get("project").is_none());
+        for field in ["task_title", "questions", "follow_ups"] {
+            assert!(
+                item["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!(field))
+            );
+        }
+        for field in ["questions", "follow_ups"] {
+            let record = &props[field]["items"];
+            assert_eq!(record["additionalProperties"], false);
+            assert!(
+                record["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("evidence"))
+            );
+            let event = &record["properties"]["updates"]["items"];
+            assert_eq!(event["additionalProperties"], false);
+            assert!(
+                event["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("evidence"))
+            );
+            assert_eq!(event["properties"]["evidence"]["$ref"], "#/$defs/evidence");
+        }
+        assert_eq!(
+            props["questions"]["items"]["properties"]["updates"]["items"]["properties"]["kind"]["enum"],
+            serde_json::json!(["answer", "resolved", "open", "unknown"])
+        );
+        assert_eq!(
+            props["follow_ups"]["items"]["properties"]["origin"]["enum"],
+            serde_json::json!(["user_request", "ai_suggestion", "unknown"])
+        );
+        assert_eq!(
+            props["follow_ups"]["items"]["properties"]["updates"]["items"]["properties"]["kind"]["enum"],
+            serde_json::json!(["accepted", "completed", "withdrawn", "unknown"])
+        );
+    }
+
+    #[test]
     fn test_analysis_schema_requires_evidence_and_explicit_correction_kind() {
         let schema: serde_json::Value = serde_json::from_str(ANALYSIS_OUTPUT_SCHEMA).unwrap();
         let properties = &schema["properties"]["sessions"]["items"]["properties"];

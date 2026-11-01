@@ -666,3 +666,7 @@ mod tests {
         assert_eq!(redact.total_count, 0);
     }
 }
+
+#[cfg(test)]
+#[path = "executor_retrospective_tests.rs"]
+mod retrospective_tests;

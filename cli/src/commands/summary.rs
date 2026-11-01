@@ -31,7 +31,7 @@ async fn load_cache_or_analyze(
         && cache::is_timezone_compatible(&cached, today)
         && cache::fingerprints_match(&cached, &fingerprints)
     {
-        return Ok(cached);
+        return Ok(prepare_cache_for_summary(cached, &run, config.as_ref()));
     }
 
     eprintln!(
@@ -46,7 +46,7 @@ async fn load_cache_or_analyze(
     {
         return Err("No current daily analysis is available after refreshing the cache".into());
     }
-    Ok(cached)
+    Ok(prepare_cache_for_summary(cached, &run, config.as_ref()))
 }
 
 /// Reloads the cache written by `run_today`. Exits when analysis produced none.
@@ -60,18 +60,76 @@ fn reload_cache_after_analysis(today: chrono::NaiveDate) -> cache::TodayCache {
     }
 }
 
-/// Concatenates all session work_summaries with source names for project-level grouping.
+/// Use the same local project and source checks as the today cache display.
+fn prepare_cache_for_summary(
+    mut cached: cache::TodayCache,
+    run: &super::collection::CollectionRun,
+    config: Option<&config::Config>,
+) -> cache::TodayCache {
+    cached.sources = super::today::prepare_cached_sources(
+        &cached,
+        run,
+        config.is_none_or(|c| c.is_redactor_enabled()),
+    );
+    cached
+}
+
+/// Opaque per-run project keys avoid sending directories or merging equal names.
 fn collect_work_summaries(cached: &cache::TodayCache) -> String {
-    let mut summaries_text = String::new();
-    for (source_name, analysis) in &cached.sources {
+    use crate::analyzer::retrospective::Project;
+    use std::collections::{HashMap, HashSet};
+    let project = |session: &analyzer::insight::SessionInsight| {
+        session
+            .project
+            .as_ref()
+            .and_then(|p| Project::from_directories([p.directory.as_str()]))
+    };
+    let mut names: HashMap<String, HashSet<Project>> = HashMap::new();
+    for (_, analysis) in &cached.sources {
         for session in &analysis.sessions {
-            summaries_text.push_str(&format!(
-                "[{source_name} / {}] {}\n",
-                session.session_id, session.work_summary
-            ));
+            if let Some(p) = project(session) {
+                names.entry(p.name().into()).or_default().insert(p);
+            }
         }
     }
-    summaries_text
+    let mut keys = HashMap::new();
+    let mut next_key = 1;
+    let mut records = Vec::new();
+    for (source_name, analysis) in &cached.sources {
+        for session in &analysis.sessions {
+            let (key, label) = if let Some(p) = project(session) {
+                let key = *keys.entry(p.clone()).or_insert_with(|| {
+                    let key = next_key;
+                    next_key += 1;
+                    key
+                });
+                let label = if names.get(p.name()).is_some_and(|set| set.len() > 1) {
+                    format!("{} (project {key})", p.name())
+                } else {
+                    p.name().to_string()
+                };
+                (key, label)
+            } else {
+                let key = next_key;
+                next_key += 1;
+                (
+                    key,
+                    format!("Project unknown / 프로젝트 미확인 (session {key})"),
+                )
+            };
+            records.push(serde_json::json!({
+                "project_key": format!("p{key}"), "project_label":label,
+                "source":source_name, "session_id":session.session_id,
+                "task_title":session.task_title.as_ref().map(|t| &t.text),
+                "work_summary":session.work_summary,
+            }));
+        }
+    }
+    if records.is_empty() {
+        String::new()
+    } else {
+        serde_json::Value::Array(records).to_string()
+    }
 }
 
 /// Generates a development progress summary for today.
@@ -208,4 +266,93 @@ fn append_summary_to_markdown(
         crate::messages::status::markdown_saved(&saved.display())
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_work_summaries_keep_project_identity_without_transmitting_paths() {
+        let session = |id: &str, path: Option<&str>| {
+            serde_json::json!({
+                "session_id":id,"work_summary":"work", "decisions":[],"curiosities":[],"corrections":[],
+                "project":path.map(|p| serde_json::json!({"directory":p}))
+            })
+        };
+        let cached: cache::TodayCache = serde_json::from_value(serde_json::json!({
+            "date":"2099-01-01", "sources":[
+                ["Claude Code", {"sessions":[session("a",Some("/private/a/app")),session("b",Some("/private/b/app")),session("u",None)]}],
+                ["Codex", {"sessions":[session("c",Some("/private/a/app")),session("v",None)]}]
+            ]
+        })).unwrap();
+        let text = collect_work_summaries(&cached);
+        assert!(!text.contains("/private/"));
+        let rows: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(rows[0]["project_key"], rows[3]["project_key"]);
+        assert_ne!(rows[0]["project_key"], rows[1]["project_key"]);
+        assert_ne!(rows[0]["project_label"], rows[1]["project_label"]);
+        assert_ne!(rows[2]["project_key"], rows[4]["project_key"]);
+        assert_eq!(rows[3]["source"], "Codex");
+        assert_eq!(rows[3]["session_id"], "c");
+        assert!(rows[0].get("questions").is_none());
+        assert!(rows[0].get("follow_ups").is_none());
+    }
+}
+
+#[cfg(test)]
+mod cache_project_tests {
+    use super::*;
+
+    #[test]
+    fn test_summary_uses_current_local_project_instead_of_cached_or_ai_identity() {
+        let cached: cache::TodayCache = serde_json::from_value(serde_json::json!({
+            "date":"2099-01-01", "sources":[["Codex",{"sessions":[{
+                "session_id":"s1","work_summary":"work","decisions":[],"curiosities":[],"corrections":[],
+                "project":{"directory":"/impostor/app"}, "task_title":{"text":"unverified","evidence":[]}
+            }]}]]
+        })).unwrap();
+        let run = super::super::collection::CollectionRun {
+            failures: vec![],
+            sources: vec![super::super::collection::CollectedSource {
+                id: "codex",
+                display_name: "Codex",
+                collection: sources::SourceCollection {
+                    sessions: vec![sources::CollectedSession {
+                        task: analyzer::SessionTask {
+                            project: analyzer::retrospective::Project::from_directories([
+                                "/actual/app",
+                            ]),
+                            source: "codex",
+                            session_id: "s1".into(),
+                            prompt_text: String::new(),
+                            messages: vec![],
+                            evidence_sources: vec![],
+                            estimated_tokens: 0,
+                        },
+                        first_activity: None,
+                        last_activity: None,
+                        token_usage: None,
+                    }],
+                    ..sources::SourceCollection::default()
+                },
+            }],
+        };
+        let prepared = prepare_cache_for_summary(cached, &run, None);
+        assert_eq!(
+            prepared.sources[0].1.sessions[0]
+                .project
+                .as_ref()
+                .unwrap()
+                .directory,
+            "/actual/app"
+        );
+        assert!(prepared.sources[0].1.sessions[0].task_title.is_none());
+        let text = collect_work_summaries(&prepared);
+        assert!(
+            !text.contains("/actual/")
+                && !text.contains("/impostor/")
+                && !text.contains("unverified")
+        );
+    }
 }

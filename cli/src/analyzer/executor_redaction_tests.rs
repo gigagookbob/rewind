@@ -96,7 +96,10 @@ async fn test_antigravity_adapter_retains_detectable_pem_until_real_request_prep
     std::fs::remove_dir_all(root).unwrap();
 }
 
-fn planned(messages: Vec<(String, String)>, strategy: StepStrategy) -> PlannedSessionTask {
+pub(super) fn planned(
+    messages: Vec<(String, String)>,
+    strategy: StepStrategy,
+) -> PlannedSessionTask {
     let sources = messages
         .iter()
         .enumerate()

@@ -66,10 +66,11 @@ pub(super) fn validate(
         let mut last = latest(&task.evidence, catalog);
         let mut today = has_today(&task.evidence);
         let mut terminal = false;
+        let mut withdrawn = false;
         for update in &mut task.updates {
             let role = match update.kind {
                 FollowUpUpdateKind::Accepted if !terminal => "USER",
-                FollowUpUpdateKind::Completed => "",
+                FollowUpUpdateKind::Completed if !withdrawn => "",
                 FollowUpUpdateKind::Withdrawn => "USER",
                 _ => return false,
             };
@@ -82,6 +83,7 @@ pub(super) fn validate(
             }
             last = latest(&update.evidence, catalog);
             today |= has_today(&update.evidence);
+            withdrawn |= update.kind == FollowUpUpdateKind::Withdrawn;
             terminal |= matches!(
                 update.kind,
                 FollowUpUpdateKind::Completed | FollowUpUpdateKind::Withdrawn

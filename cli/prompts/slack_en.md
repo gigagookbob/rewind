@@ -29,3 +29,5 @@ Restrictions:
 - Avoid excessive technical English terms
 
 Output only the final message, with no explanation.
+
+Input is a JSON array of project identity and work summaries. Combine sources only within the same project_key; keep different keys separate even when names or topics match. Never infer another project for an unknown session. Use the supplied project_label for topics, and omit internal keys and session IDs. Keep the existing accomplishment-focused format; do not invent or append questions or follow-up tasks.

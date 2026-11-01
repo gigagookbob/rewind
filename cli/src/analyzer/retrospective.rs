@@ -139,7 +139,19 @@ impl Project {
 
 impl Question {
     pub fn status_label(&self) -> &'static str {
-        match self.updates.last().map(|u| u.kind) {
+        let explicit = self.updates.iter().rev().map(|u| u.kind).find(|kind| {
+            matches!(
+                kind,
+                QuestionUpdateKind::Resolved | QuestionUpdateKind::Open
+            )
+        });
+        let status = explicit.or_else(|| {
+            self.updates
+                .iter()
+                .any(|u| u.kind == QuestionUpdateKind::Answer)
+                .then_some(QuestionUpdateKind::Answer)
+        });
+        match status {
             Some(QuestionUpdateKind::Answer) => {
                 "Answered; resolution unconfirmed / 답변 있음, 해결 미확인"
             }

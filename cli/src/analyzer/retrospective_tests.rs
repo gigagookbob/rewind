@@ -19,7 +19,7 @@ fn source(index: usize, role: &str, text: &str, reference: bool) -> evidence::So
 fn proof(index: usize, quote: &str) -> serde_json::Value {
     json!({"message_id":format!("m{index}"),"quote":quote})
 }
-fn result() -> insight::AnalysisResult {
+pub(super) fn result() -> insight::AnalysisResult {
     insight::parse_response(&json!({"sessions":[{
         "session_id":"s1", "work_summary":"test", "decisions":[], "curiosities":[], "corrections":[],
         "task_title":{"text":"질문과 작업 확인","evidence":[proof(1,"왜 실패합니까?")]},
@@ -30,7 +30,7 @@ fn result() -> insight::AnalysisResult {
                 {"kind":"completed","detail":"완료 보고", "evidence":[proof(4,"완료했습니다")]}]}]
     }]}).to_string()).unwrap()
 }
-fn sources() -> Vec<evidence::SourceMessage> {
+pub(super) fn sources() -> Vec<evidence::SourceMessage> {
     vec![
         source(1, "USER", "왜 실패합니까?", false),
         source(2, "ASSISTANT", "설명입니다. 회귀 검사도 제안합니다", false),
@@ -240,28 +240,14 @@ fn test_retrospective_output_distinguishes_answer_resolution_and_work_states() {
         )
     };
     let md = render(&result);
-    assert!(md.contains("질문과 작업 확인"));
+    assert!(md.contains("### 질문과 작업 확인"));
+    assert!(md.contains("#### Work Summary"));
     assert!(md.contains("답변 있음, 해결 미확인"));
     assert!(md.contains("AI 제안"));
     assert!(md.contains("진행 요청"));
     assert!(md.contains("완료 보고"));
     assert!(!md.contains("- [ ]"));
     assert!(!md.contains("- [x]"));
-    for (kind, label) in [("open", "미해결 명시"), ("resolved", "사용자 해결 확인")] {
-        let mut modified = result.clone();
-        modified.sessions[0].questions[0].updates.push(
-            serde_json::from_value(json!({
-                "kind":kind,"detail":"사용자 상태", "evidence":[proof(5,"해결했습니다")]
-            }))
-            .unwrap(),
-        );
-        validate(&mut modified, &sources());
-        assert!(render(&modified).contains(label));
-    }
-    result.sessions[0].follow_ups[0].updates.clear();
-    assert!(render(&result).contains("AI 제안"));
-    result.sessions[0].follow_ups[0].origin = super::retrospective::FollowUpOrigin::UserRequest;
-    assert!(render(&result).contains("사용자 요청"));
 }
 
 #[test]
@@ -308,4 +294,202 @@ fn test_retrospective_new_text_cannot_inject_markers_links_or_terminal_controls(
             .iter()
             .all(|line| !line.contains('\u{1b}') && !line.contains('\n'))
     );
+}
+
+#[test]
+fn test_retrospective_ai_answer_cannot_clear_user_resolution_or_confirm_it() {
+    let mut result = result();
+    let mut sources = sources();
+    result.sessions[0].questions[0].updates.push(
+        serde_json::from_value(json!({
+            "kind":"resolved","detail":"사용자 해결", "evidence":[proof(5,"해결했습니다")]
+        }))
+        .unwrap(),
+    );
+    sources.push(source(6, "ASSISTANT", "추가 설명입니다", false));
+    result.sessions[0].questions[0].updates.push(
+        serde_json::from_value(json!({
+            "kind":"answer","detail":"추가 답변", "evidence":[proof(6,"추가 설명입니다")]
+        }))
+        .unwrap(),
+    );
+    validate(&mut result, &sources);
+    assert!(
+        result.sessions[0].questions[0]
+            .status_label()
+            .contains("사용자 해결 확인")
+    );
+    result.sessions[0].questions[0].updates[1].evidence =
+        vec![serde_json::from_value(proof(4, "완료했습니다")).unwrap()];
+    validate(&mut result, &sources);
+    assert!(result.sessions[0].questions.is_empty());
+}
+
+#[test]
+fn test_retrospective_masked_quotes_and_generated_mask_markers_cannot_prove_state() {
+    for quote_marker in [false, true] {
+        let secret = format!("sk-proj-{}", "a".repeat(50));
+        let mut sources = sources();
+        sources[0].text = secret.clone();
+        sources[0].rendered_text = secret.clone();
+        sources[1].text = secret.clone();
+        sources[1].rendered_text = secret.clone();
+        let quote = if quote_marker {
+            "[REDACTED:API_KEY]"
+        } else {
+            secret.as_str()
+        };
+        let mut result = result();
+        result.sessions[0].task_title.as_mut().unwrap().evidence[0].quote = quote.into();
+        result.sessions[0].questions[0].evidence[0].quote = quote.into();
+        result.sessions[0].follow_ups[0].evidence[0].quote = quote.into();
+        validate(&mut result, &sources);
+        assert!(result.sessions[0].task_title.is_none());
+        assert!(result.sessions[0].questions.is_empty());
+        assert!(result.sessions[0].follow_ups.is_empty());
+    }
+}
+
+#[test]
+fn test_retrospective_explicit_user_state_survives_answers_and_changes_only_on_user_update() {
+    for (first, text, label, next, next_text, next_label) in [
+        (
+            "resolved",
+            "이제 이해했습니다",
+            "사용자 해결 확인",
+            "open",
+            "다시 문제가 있습니다",
+            "미해결 명시",
+        ),
+        (
+            "open",
+            "아직 해결되지 않았습니다",
+            "미해결 명시",
+            "resolved",
+            "이제 해결했습니다",
+            "사용자 해결 확인",
+        ),
+    ] {
+        let mut sources = sources();
+        sources[4].text = text.into();
+        sources[4].rendered_text = text.into();
+        sources.push(source(6, "ASSISTANT", "추가 답변입니다", false));
+        let mut result = result();
+        for (index, kind, detail, quote) in [
+            (5, first, "사용자 확인", text),
+            (6, "answer", "추가 답변", "추가 답변입니다"),
+        ] {
+            result.sessions[0].questions[0].updates.push(
+                serde_json::from_value(json!({
+                    "kind":kind,"detail":detail,"evidence":[proof(index,quote)]
+                }))
+                .unwrap(),
+            );
+        }
+        validate(&mut result, &sources);
+        let check = |result: &insight::AnalysisResult, label: &str| {
+            let session = &result.sessions[0];
+            assert!(session.questions[0].status_label().contains(label));
+            let lines = crate::output::retrospective::lines(session);
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.starts_with(session.questions[0].status_label()))
+            );
+            let md = crate::output::render_combined_markdown(
+                &[("Codex", result)],
+                chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap(),
+            );
+            assert!(md.contains(&crate::output::escape_markdown(&format!(
+                "{}: {}",
+                session.questions[0].status_label(),
+                session.questions[0].question
+            ))));
+        };
+        check(&result, label);
+        sources.push(source(7, "USER", next_text, false));
+        result.sessions[0].questions[0].updates.push(
+            serde_json::from_value(json!({
+                "kind":next,"detail":"사용자 갱신","evidence":[proof(7,next_text)]
+            }))
+            .unwrap(),
+        );
+        validate(&mut result, &sources);
+        check(&result, next_label);
+    }
+}
+
+#[test]
+fn test_retrospective_user_request_suggestion_acceptance_completion_and_withdrawal_remain_distinct()
+{
+    for (state, label) in [
+        ("request", "사용자 요청"),
+        ("proposal", "AI 제안"),
+        ("accepted", "진행 요청"),
+        ("completed", "완료 보고"),
+        ("withdrawn", "사용자 철회"),
+    ] {
+        let mut sources = sources();
+        let mut result = result();
+        let task = &mut result.sessions[0].follow_ups[0];
+        match state {
+            "request" => {
+                task.origin = super::retrospective::FollowUpOrigin::UserRequest;
+                task.evidence = vec![serde_json::from_value(proof(3, "진행해 주세요")).unwrap()];
+                task.updates.clear();
+            }
+            "proposal" => task.updates.clear(),
+            "accepted" => task.updates.truncate(1),
+            "withdrawn" => {
+                task.updates.truncate(1);
+                sources[4].text = "그 작업은 취소합니다".into();
+                sources[4].rendered_text = sources[4].text.clone();
+                task.updates.push(serde_json::from_value(json!({"kind":"withdrawn","detail":"취소 요청","evidence":[proof(5,"그 작업은 취소합니다")]})).unwrap());
+            }
+            _ => {}
+        }
+        validate(&mut result, &sources);
+        let roundtrip = serde_json::to_string(&result).unwrap();
+        let mut cached: insight::AnalysisResult = serde_json::from_str(&roundtrip).unwrap();
+        let messages: Vec<_> = sources
+            .iter()
+            .map(|s| (s.role.clone(), s.rendered_text.clone()))
+            .collect();
+        evidence::revalidate_cached_session(&mut cached.sessions[0], &sources, &messages, true);
+        assert_eq!(cached.sessions[0].follow_ups.len(), 1, "{state}");
+        assert!(
+            cached.sessions[0].follow_ups[0]
+                .status_label()
+                .contains(label),
+            "{state}"
+        );
+        assert!(
+            crate::output::retrospective::lines(&cached.sessions[0])
+                .iter()
+                .any(|line| line.starts_with(cached.sessions[0].follow_ups[0].status_label()))
+        );
+    }
+}
+
+#[test]
+fn test_retrospective_events_cannot_reuse_origin_message_or_unknown_kind() {
+    for kind in ["resolved", "unknown"] {
+        let mut result = result();
+        result.sessions[0].questions[0].updates =
+            vec![serde_json::from_value(json!({
+            "kind":kind,"detail":"unsupported change", "evidence":[proof(1,"왜 실패합니까?")]
+        })).unwrap()];
+        result.sessions[0].follow_ups[0].origin = super::retrospective::FollowUpOrigin::UserRequest;
+        result.sessions[0].follow_ups[0].evidence =
+            vec![serde_json::from_value(proof(3, "진행해 주세요")).unwrap()];
+        result.sessions[0].follow_ups[0].updates = vec![
+            serde_json::from_value(json!({
+                "kind":"accepted","detail":"same message", "evidence":[proof(3,"진행해 주세요")]
+            }))
+            .unwrap(),
+        ];
+        validate(&mut result, &sources());
+        assert!(result.sessions[0].questions.is_empty());
+        assert!(result.sessions[0].follow_ups.is_empty());
+    }
 }

@@ -11,3 +11,4 @@ Rules:
 - Return ONLY the Markdown content (headers + bullet points), no additional text
 - ALL text MUST be in English
 - If multiple tasks were done in the same project, use separate bullets under the same header
+Input is a JSON array containing project_key, project_label, source, session_id, task_title and work_summary. Group only identical project_key values. Never merge different project keys merely because names or task topics match. Combine sources within the same project. Do not infer projects for unknown sessions. Use the supplied project_label in headings; omit internal keys and session IDs. Do not invent or append questions or follow-up tasks.
