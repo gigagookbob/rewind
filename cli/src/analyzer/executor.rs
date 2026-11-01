@@ -421,7 +421,7 @@ async fn summarize_session_messages(
         messages,
         limits.input_tokens_per_minute.max(1),
         max_chunk_chars,
-    );
+    )?;
     summarizer::summarize_chunks(&chunks, provider, api_key, limits, lang).await
 }
 
