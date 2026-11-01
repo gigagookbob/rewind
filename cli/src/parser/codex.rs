@@ -444,15 +444,53 @@ pub fn list_session_files_for_date(
     Ok(files)
 }
 
-/// Lists session files for a local date by deriving the exact UTC date set
-/// touched by the local [00:00, next 00:00) window.
+/// Rollouts stay in their start-date folder when resumed. Scan all valid
+/// date folders up to the target UTC day; callers check actual activity.
 pub fn list_session_files_for_local_date(
     sessions_dir: &Path,
     local_date: NaiveDate,
 ) -> Result<Vec<PathBuf>, super::ParseError> {
+    let last_date = super::utc_dates_for_local_date(local_date)?
+        .into_iter()
+        .max()
+        .ok_or("Missing UTC date window")?;
+    let mut dates = Vec::new();
+    if !sessions_dir.exists() {
+        return Ok(Vec::new());
+    }
+    for year in std::fs::read_dir(sessions_dir)?.flatten() {
+        let Ok(y) = year.file_name().to_string_lossy().parse::<i32>() else {
+            continue;
+        };
+        let Ok(months) = std::fs::read_dir(year.path()) else {
+            continue;
+        };
+        for month in months.flatten() {
+            let Ok(m) = month.file_name().to_string_lossy().parse::<u32>() else {
+                continue;
+            };
+            let Ok(days) = std::fs::read_dir(month.path()) else {
+                continue;
+            };
+            for day in days.flatten() {
+                let Ok(d) = day.file_name().to_string_lossy().parse::<u32>() else {
+                    continue;
+                };
+                if let Some(date) = NaiveDate::from_ymd_opt(y, m, d)
+                    && date <= last_date
+                {
+                    dates.push(date);
+                }
+            }
+        }
+    }
+    dates.sort();
+    dates.dedup();
     let mut files = Vec::new();
-    for date in super::utc_dates_for_local_date(local_date)? {
-        files.extend(list_session_files_for_date(sessions_dir, date)?);
+    for date in dates {
+        let mut day_files = list_session_files_for_date(sessions_dir, date)?;
+        day_files.sort();
+        files.extend(day_files);
     }
     Ok(files)
 }
@@ -767,6 +805,22 @@ pub fn summarize_codex_entries(entries: &[CodexEntry]) -> CodexSessionSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn test_local_date_discovers_old_rollouts_but_not_future_folders() {
+        let base = std::env::temp_dir().join(format!("rwd_old_folders_{}", std::process::id()));
+        let old = base.join("2025/12/31");
+        let future = base.join("2099/01/03");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&future).unwrap();
+        let old_file = old.join("rollout-old.jsonl");
+        std::fs::write(&old_file, "").unwrap();
+        std::fs::write(future.join("rollout-future.jsonl"), "").unwrap();
+        let files =
+            list_session_files_for_local_date(&base, NaiveDate::from_ymd_opt(2099, 1, 1).unwrap())
+                .unwrap();
+        std::fs::remove_dir_all(&base).unwrap();
+        assert_eq!(files, vec![old_file]);
+    }
 
     #[test]
     fn test_source_location_survives_codex_deduplication() {
