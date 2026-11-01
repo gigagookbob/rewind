@@ -376,6 +376,9 @@ async fn execute_task(
     } else {
         super::evidence::validate(&mut result, &planned.task.session_id, catalog);
     }
+    for session in &mut result.sessions {
+        session.project.clone_from(&planned.task.project);
+    }
     attach_coverage_notice(&mut result, coverage_notice.as_deref())?;
     Ok((result, usage))
 }
@@ -468,6 +471,7 @@ mod tests {
     pub(super) fn sample_analysis(session_id: &str) -> AnalysisResult {
         AnalysisResult {
             sessions: vec![insight::SessionInsight {
+                project: None,
                 session_id: session_id.to_string(),
                 work_summary: format!("summary-{session_id}"),
                 decisions: vec![],

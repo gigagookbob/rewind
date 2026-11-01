@@ -41,6 +41,9 @@ pub struct AnalysisResult {
 /// Per-session insight matching the insight categories defined in ARCHITECTURE.md.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInsight {
+    /// Set from local log metadata, never accepted from model output.
+    #[serde(default)]
+    pub project: Option<super::retrospective::Project>,
     pub session_id: String,
     #[serde(deserialize_with = "string_or_stringify")]
     pub work_summary: String,
@@ -226,6 +229,7 @@ mod tests {
     fn test_merge_results_multiple() {
         let r1 = AnalysisResult {
             sessions: vec![SessionInsight {
+                project: None,
                 session_id: "s1".to_string(),
                 work_summary: "작업1".to_string(),
                 decisions: vec![],
@@ -236,6 +240,7 @@ mod tests {
         };
         let r2 = AnalysisResult {
             sessions: vec![SessionInsight {
+                project: None,
                 session_id: "s2".to_string(),
                 work_summary: "작업2".to_string(),
                 decisions: vec![],

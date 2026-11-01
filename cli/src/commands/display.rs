@@ -277,72 +277,63 @@ fn unicode_display_width(s: &str) -> usize {
 }
 
 /// Prints analysis results in a full-box style per source.
-pub(super) fn print_insights(source_name: &str, analysis: &analyzer::AnalysisResult) {
+pub(super) fn print_insights(sources: &[(&str, &analyzer::AnalysisResult)]) {
     let term_w = terminal_width();
-    let header_used = 5 + unicode_display_width(source_name) + 1;
-    let line_len = if term_w > header_used {
-        term_w - header_used
-    } else {
-        20
-    };
-    let line = "─".repeat(line_len);
-    println!("\n{CYAN}  ┌─ {source_name} {line}{RESET}");
-    println!("  {}", crate::messages::display::ATTRIBUTION_NOTE);
-
-    for session in &analysis.sessions {
-        // Show only the first 8 chars of session ID for readability
-        let id_short = if session.session_id.len() >= 8 {
-            &session.session_id[..8]
-        } else {
-            &session.session_id
-        };
-        println!("\n{BRIGHT_BLUE}  ▸ Session: {id_short}{RESET}");
-        println!(
-            "{}",
-            crate::messages::display::summary_line(&session.work_summary)
-        );
-
-        if !session.decisions.is_empty() {
+    println!("\n  {}", crate::messages::display::ATTRIBUTION_NOTE);
+    for (project, sessions) in crate::output::project_groups(sources) {
+        let label = crate::output::plain(&crate::output::project_label(project.as_ref()));
+        println!("\n{CYAN}  ┌─ Project: {label}{RESET}");
+        for (source_name, session) in sessions {
+            println!("\n  Source: {}", crate::output::plain(source_name));
+            // Show only the first 8 chars of session ID for readability
+            let id_short = crate::output::plain(&session.session_id);
+            println!("\n{BRIGHT_BLUE}  ▸ Session: {id_short}{RESET}");
             println!(
-                "\n  {YELLOW}{}{RESET}",
-                crate::messages::display::DECISIONS_LABEL
+                "{}",
+                crate::messages::display::summary_line(&session.work_summary)
             );
-            for d in &session.decisions {
-                println!("  • {}", d.what);
-                println!("    {DIM}→ {}{RESET}", d.why);
-                print!("{}", crate::output::display_evidence(&d.evidence));
-            }
-        }
 
-        if !session.curiosities.is_empty() {
-            println!(
-                "\n  {YELLOW}{}{RESET}",
-                crate::messages::display::CURIOSITIES_LABEL
-            );
-            for c in &session.curiosities {
-                println!("  • {c}");
+            if !session.decisions.is_empty() {
+                println!(
+                    "\n  {YELLOW}{}{RESET}",
+                    crate::messages::display::DECISIONS_LABEL
+                );
+                for d in &session.decisions {
+                    println!("  • {}", d.what);
+                    println!("    {DIM}→ {}{RESET}", d.why);
+                    print!("{}", crate::output::display_evidence(&d.evidence));
+                }
             }
-        }
 
-        if !session.corrections.is_empty() {
-            println!(
-                "\n  {YELLOW}{}{RESET}",
-                crate::messages::display::CORRECTIONS_LABEL
-            );
-            for c in &session.corrections {
-                println!("  {}", c.kind.label());
-                println!("    AI: {}", c.model_said);
-                println!("    User: {}", c.user_corrected);
-                print!("{}", crate::output::display_evidence(&c.evidence));
+            if !session.curiosities.is_empty() {
+                println!(
+                    "\n  {YELLOW}{}{RESET}",
+                    crate::messages::display::CURIOSITIES_LABEL
+                );
+                for c in &session.curiosities {
+                    println!("  • {c}");
+                }
             }
-        }
 
-        for til in &session.til {
-            println!("\n  TIL: {}\n    {}", til.title, til.detail);
-            print!("{}", crate::output::display_evidence(&til.evidence));
+            if !session.corrections.is_empty() {
+                println!(
+                    "\n  {YELLOW}{}{RESET}",
+                    crate::messages::display::CORRECTIONS_LABEL
+                );
+                for c in &session.corrections {
+                    println!("  {}", c.kind.label());
+                    println!("    AI: {}", c.model_said);
+                    println!("    User: {}", c.user_corrected);
+                    print!("{}", crate::output::display_evidence(&c.evidence));
+                }
+            }
+
+            for til in &session.til {
+                println!("\n  TIL: {}\n    {}", til.title, til.detail);
+                print!("{}", crate::output::display_evidence(&til.evidence));
+            }
         }
     }
-
     let bottom_line = "─".repeat(if term_w > 2 { term_w - 2 } else { 20 });
     println!("\n{CYAN}  └{bottom_line}{RESET}");
 }
@@ -372,6 +363,7 @@ mod tests {
     fn session(token_usage: Option<(u64, u64)>) -> CollectedSession {
         CollectedSession {
             task: SessionTask {
+                project: None,
                 evidence_sources: vec![],
                 source: "codex",
                 session_id: "s1".to_string(),
@@ -468,6 +460,7 @@ mod tests {
             vec!["/claude-a".into(), "/claude-b".into()],
             vec![CollectedSession {
                 task: SessionTask {
+                    project: None,
                     evidence_sources: vec![],
                     source: "claude",
                     session_id: "c0d5ead8-1234-5678".to_string(),

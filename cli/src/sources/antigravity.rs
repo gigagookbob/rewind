@@ -394,6 +394,7 @@ impl SourceAdapter for AntigravityAdapter {
             let prompt_text = build_prompt(id, &messages);
             sessions.push(CollectedSession {
                 task: analyzer::SessionTask {
+                    project: None,
                     evidence_sources: evidence_sources(&day_steps),
                     source: Self::ID,
                     session_id: id.clone(),

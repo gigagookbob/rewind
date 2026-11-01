@@ -67,9 +67,7 @@ pub(crate) async fn run_today(
                 .iter()
                 .map(|(name, result)| (name.as_str(), result))
                 .collect();
-            for (name, analysis) in &source_refs {
-                print_insights(name, analysis);
-            }
+            print_insights(&source_refs);
             save_combined_analysis(&source_refs, today, verbose)?;
             return Ok(());
         }
@@ -136,9 +134,7 @@ pub(crate) async fn run_today(
             .iter()
             .map(|(name, result)| (name.as_str(), result))
             .collect();
-        for (name, analysis) in &source_refs {
-            print_insights(name, analysis);
-        }
+        print_insights(&source_refs);
         save_combined_analysis(&source_refs, today, verbose)?;
 
         // Save analysis results to cache.
@@ -194,6 +190,7 @@ fn prepare_cached_sources(
                         .find(|candidate| candidate.task.session_id == session.session_id)
                 })
                 .map(|candidate| &candidate.task);
+            session.project = task.and_then(|t| t.project.clone());
             let sources = task
                 .map(|t| t.evidence_sources.as_slice())
                 .unwrap_or_default();

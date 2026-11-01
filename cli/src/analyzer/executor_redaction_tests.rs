@@ -120,6 +120,7 @@ fn planned(messages: Vec<(String, String)>, strategy: StepStrategy) -> PlannedSe
         estimated_tokens: 100,
         strategy,
         task: SessionTask {
+            project: None,
             source: "synthetic",
             session_id: "s1".into(),
             prompt_text: String::new(),

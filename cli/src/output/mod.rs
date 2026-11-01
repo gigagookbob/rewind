@@ -49,6 +49,32 @@ pub fn save_summary_to_vault(
     vault::save(vault_path, date, managed::Section::Summary, &body)
 }
 
+/// Full directory keys keep equal leaf names separate. Unknown remains explicit.
+pub(crate) fn project_groups<'a>(
+    sources: &[(&'a str, &'a crate::analyzer::AnalysisResult)],
+) -> std::collections::BTreeMap<
+    Option<crate::analyzer::retrospective::Project>,
+    Vec<(&'a str, &'a crate::analyzer::insight::SessionInsight)>,
+> {
+    let mut groups = std::collections::BTreeMap::new();
+    for (name, analysis) in sources {
+        for session in &analysis.sessions {
+            let project = session.project.as_ref().and_then(|p| {
+                crate::analyzer::retrospective::Project::from_directories([p.directory.as_str()])
+            });
+            groups
+                .entry(project)
+                .or_insert_with(Vec::new)
+                .push((*name, session));
+        }
+    }
+    groups
+}
+
+pub(crate) fn project_label(project: Option<&crate::analyzer::retrospective::Project>) -> String {
+    project.map_or_else(|| "Project unknown / 프로젝트 미확인".into(), |p| p.label())
+}
+
 /// Shared evidence text. Strip control characters before printing to a terminal.
 pub fn display_evidence(evidence: &[Evidence]) -> String {
     let mut output = String::new();
@@ -85,13 +111,13 @@ pub fn display_evidence(evidence: &[Evidence]) -> String {
     output
 }
 
-fn plain(text: &str) -> String {
+pub(crate) fn plain(text: &str) -> String {
     text.chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect()
 }
 
-fn escape_markdown(text: &str) -> String {
+pub(crate) fn escape_markdown(text: &str) -> String {
     let mut output = String::new();
     for c in text.chars() {
         match c {

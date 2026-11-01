@@ -130,6 +130,12 @@ impl SourceAdapter for ClaudeAdapter {
                 .filter(|entry| entry_session_id(entry) == Some(session.task.session_id.as_str()))
                 .cloned()
                 .collect();
+            session.task.project = analyzer::retrospective::Project::from_directories(
+                history.iter().filter_map(|entry| match entry {
+                    LogEntry::User(user) => user.cwd.as_deref(),
+                    _ => None,
+                }),
+            );
             analyzer::context::prepend_reference(
                 &mut session.task,
                 analyzer::evidence::claude_source_messages(&history, &[]),

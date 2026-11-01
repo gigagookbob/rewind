@@ -11,6 +11,7 @@ pub mod openai;
 pub mod planner;
 pub mod prompt;
 pub mod provider;
+pub mod retrospective;
 pub mod summarizer;
 
 // TODO: Replace with a dedicated error type via thiserror.
@@ -39,6 +40,7 @@ use std::collections::HashMap;
 /// Common per-session analysis input shared by every log source.
 #[derive(Debug, Clone)]
 pub struct SessionTask {
+    pub project: Option<retrospective::Project>,
     pub evidence_sources: Vec<evidence::SourceMessage>,
     /// Id of the source adapter that built this task (e.g. "claude"), for `-v` output.
     pub source: &'static str,
@@ -186,6 +188,12 @@ pub fn build_claude_session_tasks(
             .unwrap_or_else(|| prompt::estimate_prompt_tokens(&prompt_text));
 
         tasks.push(SessionTask {
+            project: retrospective::Project::from_directories(session_entries.iter().filter_map(
+                |entry| match entry {
+                    LogEntry::User(user) => user.cwd.as_deref(),
+                    _ => None,
+                },
+            )),
             evidence_sources: evidence::claude_source_messages(&session_entries, lines),
             source,
             session_id,
@@ -211,6 +219,12 @@ pub fn build_codex_session_task(
     let estimated_tokens = prompt::estimate_prompt_tokens(&prompt_text) + messages.len() as u64 * 8;
 
     Ok(SessionTask {
+        project: retrospective::Project::from_directories(entries.iter().filter_map(|entry| {
+            match entry {
+                CodexEntry::SessionMeta { cwd, .. } => Some(cwd.as_str()),
+                _ => None,
+            }
+        })),
         evidence_sources: evidence::codex_source_messages(entries, lines),
         source,
         session_id: session_id.to_string(),

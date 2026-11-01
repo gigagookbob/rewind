@@ -67,6 +67,7 @@ fn analysis_input_digest(collection: &SourceCollection) -> String {
     sessions.sort_by(|a, b| a.task.session_id.cmp(&b.task.session_id));
     for session in sessions {
         session.task.session_id.hash(&mut hash);
+        session.task.project.hash(&mut hash);
         session.task.messages.hash(&mut hash);
         session.task.prompt_text.hash(&mut hash);
         for source in &session.task.evidence_sources {
@@ -84,7 +85,7 @@ fn analysis_input_digest(collection: &SourceCollection) -> String {
             }
         }
     }
-    format!("ai-redaction-v1:{:016x}", hash.finish())
+    format!("retrospective-v1:{:016x}", hash.finish())
 }
 
 #[cfg(test)]
@@ -216,6 +217,7 @@ mod tests {
                 roots: vec![std::path::PathBuf::from("/fake")],
                 sessions: vec![CollectedSession {
                     task: SessionTask {
+                        project: None,
                         evidence_sources: vec![],
                         source: "fake",
                         session_id: format!("{}-session", self.id),
