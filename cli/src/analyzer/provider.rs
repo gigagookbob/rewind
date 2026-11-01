@@ -256,3 +256,18 @@ pub fn load_provider() -> Result<(LlmProvider, String), super::AnalyzerError> {
     };
     Ok((provider, api_key))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_analysis_prompt_estimate_covers_both_languages() {
+        for lang in [Lang::Ko, Lang::En] {
+            assert!(
+                super::super::prompt::estimate_tokens(get_system_prompt(&lang))
+                    <= super::super::prompt::SYSTEM_PROMPT_ESTIMATED_TOKENS
+            );
+        }
+    }
+}

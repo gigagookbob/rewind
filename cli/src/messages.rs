@@ -358,10 +358,17 @@ pub mod status {
         format!("    \u{2713} Chunk {i}/{total} done")
     }
 
-    pub fn chunk_cap_applied(requested: usize, cap: usize) -> String {
-        format!(
-            "    \u{26A0} Session produced {requested} chunks; capping to first {cap} to preserve quota"
-        )
+    pub fn chunk_coverage(total: usize, lang: &crate::config::Lang) -> String {
+        let tail = total - 1;
+        let omitted_end = total - 2;
+        match lang {
+            crate::config::Lang::Ko => format!(
+                "[부분 분석] 분석 범위는 전체 {total}개 중 1, {tail}, {total}번 조각입니다. 중간 2..={omitted_end}번 조각은 호출 상한으로 제외합니다. 제외 구간의 결정과 정정은 확인하지 못했습니다."
+            ),
+            crate::config::Lang::En => format!(
+                "[Partial analysis] Coverage is limited to chunks 1, {tail}, {total} of {total}. Middle chunks 2..={omitted_end} are excluded due to the call cap. Decisions and corrections in that gap were not checked."
+            ),
+        }
     }
 
     pub fn plan_multi_step_scoped(source: &str, steps: usize, total_tokens: u64) -> String {
