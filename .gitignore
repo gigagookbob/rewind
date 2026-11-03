@@ -12,3 +12,6 @@
 
 # Logs
 firebase-debug.log
+
+# oh-my-claudecode 플러그인 상태 파일
+.omc/
