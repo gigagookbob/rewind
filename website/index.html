@@ -6,7 +6,7 @@
     <title>rwd: Rewind your day. Daily notes for Claude Code, Codex, and other AI agents.</title>
     <meta
       name="description"
-      content="Open-source CLI for AI agents like Claude Code and Codex. Turns your coding day into one daily note of decisions, questions, and corrections."
+      content="Open-source CLI for AI agents like Claude Code, Codex, and Antigravity. Turns your coding day into one daily note of decisions, questions, and corrections."
     />
     <meta name="robots" content="index,follow,max-image-preview:large" />
     <meta name="theme-color" content="#09090b" />
@@ -21,7 +21,7 @@
     />
     <meta
       property="og:description"
-      content="Open-source CLI for AI agents like Claude Code and Codex. Turns your coding day into one daily note of decisions, questions, and corrections."
+      content="Open-source CLI for AI agents like Claude Code, Codex, and Antigravity. Turns your coding day into one daily note of decisions, questions, and corrections."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://www.rewind.day/" />
@@ -45,7 +45,7 @@
     />
     <meta
       name="twitter:description"
-      content="Open-source CLI for AI agents like Claude Code and Codex. Turns your coding day into one daily note of decisions, questions, and corrections."
+      content="Open-source CLI for AI agents like Claude Code, Codex, and Antigravity. Turns your coding day into one daily note of decisions, questions, and corrections."
     />
     <meta name="twitter:image" content="https://www.rewind.day/assets/og-image.png" />
     <meta
@@ -62,14 +62,14 @@
             "@type": "WebSite",
             "name": "rwd",
             "url": "https://www.rewind.day/",
-            "description": "Open-source CLI for AI agents like Claude Code and Codex. Turns your coding day into one daily note of decisions, questions, and corrections."
+            "description": "Open-source CLI for AI agents like Claude Code, Codex, and Antigravity. Turns your coding day into one daily note of decisions, questions, and corrections."
           },
           {
             "@type": "SoftwareApplication",
             "name": "rwd",
             "applicationCategory": "DeveloperApplication",
             "operatingSystem": "macOS (Apple Silicon), Linux x86_64 and WSL2 x86_64 (glibc 2.34+)",
-            "description": "Open-source CLI for AI agents like Claude Code and Codex. Turns your coding day into one daily note of decisions, questions, and corrections.",
+            "description": "Open-source CLI for AI agents like Claude Code, Codex, and Antigravity. Turns your coding day into one daily note of decisions, questions, and corrections.",
             "url": "https://www.rewind.day/",
             "image": "https://www.rewind.day/assets/og-image.png",
             "license": "https://github.com/gigagookbob/rewind/blob/main/LICENSE",
@@ -80,9 +80,9 @@
               "priceCurrency": "USD"
             },
             "featureList": [
-              "Capture sessions from Claude Code and Codex automatically",
+              "Capture sessions from Claude Code, Codex, and Antigravity automatically",
               "Keep decisions, questions, and corrections in a daily Markdown note",
-              "Mask API keys, tokens, and private IPs locally before analysis",
+              "Mask common secret formats locally with built-in patterns before analysis",
               "Generate shareable summaries and Slack-ready posts"
             ]
           },
@@ -94,7 +94,7 @@
                 "name": "Which AI agents does rwd read?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Claude Code and Codex today. More CLIs on the way."
+                  "text": "Claude Code, Codex, and Antigravity (agy CLI, Antigravity app, and Antigravity IDE)."
                 }
               },
               {
@@ -126,7 +126,7 @@
                 "name": "Is my data sent raw to the model?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "No. API keys, bearer tokens, and private IPs are masked locally before anything is sent."
+                  "text": "Not by default. Before sending to your chosen provider, rwd masks values that match its built-in patterns: API keys, bearer tokens, AWS, GitHub, and Slack tokens, private keys, quoted password, secret, or api_key assignments, and private IPs. The rest of the conversation is sent as is, and patterns can't catch every secret. Setting [redactor] enabled = false in the config turns masking off and sends these values unmasked."
                 }
               }
             ]
@@ -255,7 +255,7 @@
   ██████  ██  █  ██ ██   ██
   ██   ██ ██ ███ ██ ██   ██
   ██   ██  ███ ███  ██████</pre>
-                <span class="rwd-banner-meta">rewind your day &nbsp;v0.13.15</span>
+                <span class="rwd-banner-meta">rewind your day &nbsp;v0.15.0</span>
               </div>
 
               <div class="rwd-summary-card">
@@ -323,9 +323,9 @@
             <span class="showcase-eyebrow">01 · Capture</span>
             <h2 class="showcase-title">One command scans the whole day</h2>
             <p class="showcase-desc">
-              <code>rwd today</code> walks every AI agent session across your projects, extracts what happened, and writes one structured note.
+              <code>rwd today</code> walks your supported AI agent sessions across projects, extracts what happened, and writes one structured note.
             </p>
-            <p class="showcase-note">Claude Code and Codex today. More agents on the way.</p>
+            <p class="showcase-note">Claude Code, Codex, and Antigravity today.</p>
           </div>
           <div class="mockup mockup-progress">
             <div class="mockup-header">
@@ -333,7 +333,7 @@
               <span class="mockup-title">~ rwd today</span>
             </div>
             <div class="mockup-body">
-              <span class="progress-line progress-banner">rwd &nbsp;v0.13.15 &nbsp;&middot;&nbsp; 2026-04-18</span>
+              <span class="progress-line progress-banner">rwd &nbsp;v0.15.0 &nbsp;&middot;&nbsp; 2026-04-18</span>
               <span class="progress-line progress-magenta">Analyzing insights via Codex...</span>
               <span class="progress-line progress-info">&#10003; Analyzing 6 sessions (est. 45,382 tokens)</span>
               <span class="progress-line progress-step-done">&#10003; [1/6] 865ae218</span>
@@ -402,10 +402,11 @@
         <div class="showcase-inner">
           <div class="showcase-text">
             <span class="showcase-eyebrow">03 · Redact</span>
-            <h2 class="showcase-title">Secrets masked before analysis</h2>
+            <h2 class="showcase-title">Common secrets masked before analysis</h2>
             <p class="showcase-desc">
-              Sensitive values get masked locally before anything touches an LLM. API keys, bearer tokens, private IPs stay on your machine.
+              Before anything reaches the model, rwd masks values that match its built-in patterns, such as API keys, bearer tokens, and private IPs. Masking is on by default.
             </p>
+            <p class="showcase-note">Patterns can't catch every secret. Turning masking off in the config sends these values unmasked.</p>
           </div>
           <div class="mockup mockup-diff">
             <div class="mockup-header">
@@ -424,7 +425,7 @@
                 <div class="diff-col diff-col--masked">
                   <div class="diff-col-label">Sent to the model</div>
                   <span class="diff-line"><span class="diff-line--dim">export</span> OPENAI_API_KEY=<span class="diff-mask">[REDACTED:API_KEY]</span></span>
-                  <span class="diff-line"><span class="diff-line--dim">curl -H</span> "Authorization: Bearer <span class="diff-mask">[REDACTED:BEARER]</span>"</span>
+                  <span class="diff-line"><span class="diff-line--dim">curl -H</span> "Authorization: <span class="diff-mask">[REDACTED:BEARER_TOKEN]</span>"</span>
                   <span class="diff-line"><span class="diff-line--dim">db_host:</span> <span class="diff-mask">[REDACTED:PRIVATE_IP]</span>:5432</span>
                   <span class="diff-line"><span class="diff-line--dim">anthropic_api_key=</span><span class="diff-mask">[REDACTED:API_KEY]</span></span>
                 </div>
@@ -583,7 +584,7 @@
             </li>
             <li>
               <h3>Create your first daily note</h3>
-              <p>After using Claude Code or Codex, run:</p>
+              <p>After using Claude Code, Codex, or Antigravity, run:</p>
               <div class="install-block">
                 <div class="install-info">
 
@@ -612,7 +613,7 @@
                 <span class="faq-icon">+</span>
               </button>
               <div class="faq-answer">
-                <p>Claude Code and Codex today. More CLIs on the way.</p>
+                <p>Claude Code, Codex, and Antigravity (agy CLI, Antigravity app, and Antigravity IDE).</p>
               </div>
             </div>
             <div class="faq-item">
@@ -648,7 +649,8 @@
                 <span class="faq-icon">+</span>
               </button>
               <div class="faq-answer">
-                <p>No. API keys, bearer tokens, and private IPs are masked locally before anything is sent.</p>
+                <p>Not by default. Before sending to your chosen provider, rwd masks values that match its built-in patterns: API keys, bearer tokens, AWS, GitHub, and Slack tokens, private keys, quoted <code>password</code>, <code>secret</code>, or <code>api_key</code> assignments, and private IPs. The rest of the conversation is sent as is, and patterns can't catch every secret.</p>
+                <p>To turn masking off, set <code>[redactor] enabled = false</code> in <code>~/.config/rwd/config.toml</code>. These values are then sent unmasked.</p>
               </div>
             </div>
           </div>
