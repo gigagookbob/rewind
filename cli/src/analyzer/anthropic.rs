@@ -7,6 +7,10 @@ const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
 const MODEL: &str = "claude-opus-4-6";
 
+#[cfg(test)]
+#[path = "anthropic_error_tests.rs"]
+mod error_tests;
+
 /// Claude Messages API request body.
 #[derive(Serialize)]
 struct ApiRequest {
@@ -52,6 +56,7 @@ struct ApiContentBlock {
 /// Calls the Anthropic Claude Messages API and returns the raw text response.
 pub(super) fn build_request(
     api_key: &str,
+    workspace_id: Option<&str>,
     system_prompt: &str,
     conversation_text: &str,
     max_tokens: u32,
@@ -68,13 +73,27 @@ pub(super) fn build_request(
         }],
     };
 
-    Ok(client
-        .post(API_URL)
-        .header("x-api-key", api_key)
-        .header("anthropic-version", API_VERSION)
-        .header("content-type", "application/json")
-        .json(&request_body)
-        .build()?)
+    Ok(with_workspace(
+        client
+            .post(API_URL)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", API_VERSION)
+            .header("content-type", "application/json"),
+        workspace_id,
+    )?
+    .json(&request_body)
+    .build()?)
+}
+
+/// Apply the same workspace selection to inference, probes, and credential checks.
+pub(crate) fn with_workspace(
+    request: reqwest::RequestBuilder,
+    workspace_id: Option<&str>,
+) -> Result<reqwest::RequestBuilder, super::AnalyzerError> {
+    match crate::config::parse_anthropic_workspace_id(workspace_id.unwrap_or(""))? {
+        Some(id) => Ok(request.header("anthropic-workspace-id", id)),
+        None => Ok(request),
+    }
 }
 
 pub(super) async fn send_request(
@@ -84,10 +103,7 @@ pub(super) async fn send_request(
 
     let status = response.status();
     if !status.is_success() {
-        // Provider errors may echo submitted conversations or credentials.
-        return Err(
-            crate::messages::error::api_request_failed(&status, "response body omitted").into(),
-        );
+        return Err(super::anthropic_error::describe(response).await.into());
     }
 
     let api_response: ApiResponse = response.json().await?;
@@ -111,31 +127,30 @@ pub(super) async fn send_request(
 }
 
 /// Sends a minimal request to probe rate limits from response headers.
-/// Returns None on failure; the caller falls back to default_generous().
-pub async fn probe_anthropic_rate_limits(api_key: &str) -> Option<RateLimits> {
-    let client = reqwest::Client::new();
+/// Network/transient failures use defaults; rejected credentials/configuration stop analysis.
+pub async fn probe_anthropic_rate_limits(
+    api_key: &str,
+    workspace_id: Option<&str>,
+) -> Result<Option<RateLimits>, super::AnalyzerError> {
+    let request = build_request(api_key, workspace_id, "", "ping", 1)?;
+    let response = reqwest::Client::new().execute(request).await;
+    match response {
+        Ok(response) => rate_limits_from_response(response).await,
+        Err(_) => Ok(None),
+    }
+}
 
-    let request_body = ApiRequest {
-        model: MODEL.to_string(),
-        max_tokens: 1,
-        system: String::new(),
-        messages: vec![ApiMessage {
-            role: "user".to_string(),
-            content: "ping".to_string(),
-        }],
-    };
-
-    let response = client
-        .post(API_URL)
-        .header("x-api-key", api_key)
-        .header("anthropic-version", API_VERSION)
-        .header("content-type", "application/json")
-        .json(&request_body)
-        .send()
-        .await
-        .ok()?;
-
-    parse_anthropic_rate_headers(&response)
+async fn rate_limits_from_response(
+    response: reqwest::Response,
+) -> Result<Option<RateLimits>, super::AnalyzerError> {
+    let status = response.status();
+    if status.is_client_error() && status != reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(super::anthropic_error::describe(response).await.into());
+    }
+    if !status.is_success() {
+        return Ok(None);
+    }
+    Ok(parse_anthropic_rate_headers(&response))
 }
 
 /// Extracts rate limit values from Anthropic response headers.

@@ -55,7 +55,7 @@ pub mod config {
     pub const NAV_HINT: &str =
         "  \u{2191}\u{2193} Navigate \u{00B7} Enter Select \u{00B7} Esc Exit";
     pub const NO_CHANGE: &str = "  No change";
-    pub const USAGE: &str = "Usage: `rwd config` (interactive) or `rwd config <key> <value>` (keys: output-path, provider, api-key, openai-api-key, anthropic-api-key, codex-model, codex-reasoning, claude-include-automated)";
+    pub const USAGE: &str = "Usage: `rwd config` (interactive) or `rwd config <key> <value>` (keys: output-path, provider, api-key, openai-api-key, anthropic-api-key, anthropic-workspace-id, codex-model, codex-reasoning, claude-include-automated)";
 
     pub fn config_saved(path: &dyn std::fmt::Display) -> String {
         format!("Config saved. {path}")
@@ -95,7 +95,7 @@ pub mod config {
 
     pub fn unknown_key(key: &str) -> String {
         format!(
-            "Unknown config key: '{key}'. Available: output-path, provider, api-key, openai-api-key, anthropic-api-key, codex-model, codex-reasoning, claude-include-automated"
+            "Unknown config key: '{key}'. Available: output-path, provider, api-key, openai-api-key, anthropic-api-key, anthropic-workspace-id, codex-model, codex-reasoning, claude-include-automated"
         )
     }
 
@@ -493,8 +493,16 @@ pub mod verify {
         "  Codex login check failed (command execution error)";
     pub const CODEX_NOT_LOGGED_IN: &str = "  \u{26A0} Codex login not found. Run `codex login`.";
 
-    pub fn key_invalid(status: u16) -> String {
-        format!("  \u{26A0} API key is invalid ({status}). Please check your key.")
+    pub fn verification_failed(status: u16) -> String {
+        if status == 401 {
+            format!(
+                "API authentication failed ({status}). Check that your key is active and correct."
+            )
+        } else {
+            format!(
+                "API credential check failed (HTTP {status}). This does not necessarily mean the key is invalid."
+            )
+        }
     }
 }
 

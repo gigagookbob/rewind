@@ -30,6 +30,7 @@ Examples:
   rwd config api-key sk-...         Set API key for current provider
   rwd config openai-api-key sk-...  Set OpenAI API key
   rwd config anthropic-api-key ...  Set Anthropic API key
+  rwd config anthropic-workspace-id wrkspc_...  Set workspace for organization-scoped keys
   rwd auth status                   Show provider auth status
   rwd reset --dry-run               Preview files that reset will remove
   rwd reset --yes                   Reset config/cache without confirmation

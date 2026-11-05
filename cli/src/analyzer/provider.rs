@@ -57,6 +57,7 @@ pub enum ProviderKind {
 pub struct LlmProvider {
     pub(super) kind: ProviderKind,
     redactor_enabled: bool,
+    anthropic_workspace_id: Option<String>,
     #[cfg(test)]
     pub(super) recording: Option<super::transport_tests::Recording>,
 }
@@ -79,6 +80,7 @@ impl LlmProvider {
         Self {
             kind,
             redactor_enabled,
+            anthropic_workspace_id: None,
             #[cfg(test)]
             recording: None,
         }
@@ -200,7 +202,11 @@ impl LlmProvider {
         self.check_input(&system, &text, input_budget)?;
         let request = match &self.kind {
             ProviderKind::Anthropic => OutboundRequest::Anthropic(super::anthropic::build_request(
-                api_key, &system, &text, max_tokens,
+                api_key,
+                self.anthropic_workspace_id.as_deref(),
+                &system,
+                &text,
+                max_tokens,
             )?),
             ProviderKind::OpenAi => OutboundRequest::OpenAi(super::openai::build_request(
                 api_key,
@@ -295,16 +301,25 @@ impl LlmProvider {
 
     /// Probes actual rate limits via a lightweight API call.
     /// Returns (RateLimits, probed) where probed=true means real values, false means defaults.
-    pub async fn probe_rate_limits(&self, api_key: &str) -> (super::planner::RateLimits, bool) {
+    pub async fn probe_rate_limits(
+        &self,
+        api_key: &str,
+    ) -> Result<(super::planner::RateLimits, bool), super::AnalyzerError> {
         let result = match &self.kind {
-            ProviderKind::Anthropic => super::anthropic::probe_anthropic_rate_limits(api_key).await,
+            ProviderKind::Anthropic => {
+                super::anthropic::probe_anthropic_rate_limits(
+                    api_key,
+                    self.anthropic_workspace_id.as_deref(),
+                )
+                .await?
+            }
             ProviderKind::OpenAi => super::openai::probe_openai_rate_limits(api_key).await,
             ProviderKind::Codex { .. } => None,
         };
-        match result {
+        Ok(match result {
             Some(limits) => (limits, true),
             None => (super::planner::RateLimits::default_generous(), false),
-        }
+        })
     }
 
     /// Returns true if this provider supports rate-limit probing.
@@ -364,10 +379,11 @@ pub(super) fn load_provider_from_path(
             return Err(crate::messages::error::unsupported_provider_in_config().into());
         }
     };
-    Ok((
-        LlmProvider::new(provider, config.is_redactor_enabled()),
-        api_key,
-    ))
+    let mut provider = LlmProvider::new(provider, config.is_redactor_enabled());
+    if matches!(provider.kind, ProviderKind::Anthropic) {
+        provider.anthropic_workspace_id = config.llm.anthropic_workspace_id()?;
+    }
+    Ok((provider, api_key))
 }
 
 #[cfg(test)]

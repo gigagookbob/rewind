@@ -156,7 +156,12 @@ async fn prompt_provider_api_key(
             &mask_api_key(config.llm.api_key_for_provider(provider))
         )
     );
-    verify_api_key(provider, config.llm.api_key_for_provider(provider)).await;
+    verify_api_key(
+        provider,
+        config.llm.api_key_for_provider(provider),
+        config.llm.anthropic_workspace_id.as_deref(),
+    )
+    .await;
     eprintln!();
     Ok(())
 }
@@ -234,6 +239,14 @@ pub(crate) async fn run_config_interactive() -> Result<(), ConfigError> {
                     Lang::Ko => "ko",
                 })
             ),
+            format!(
+                "{cyan}anthropic-workspace-id{reset} {dim}[{}]{reset}",
+                config
+                    .llm
+                    .anthropic_workspace_id
+                    .as_deref()
+                    .unwrap_or("not set")
+            ),
             format!("{dim}{}{reset}", crate::messages::config::EXIT),
         ];
 
@@ -285,6 +298,7 @@ pub(crate) async fn run_config_interactive() -> Result<(), ConfigError> {
                     verify_api_key(
                         &config.llm.provider,
                         config.llm.api_key_for_provider(&config.llm.provider),
+                        config.llm.anthropic_workspace_id.as_deref(),
                     )
                     .await;
                     eprintln!();
@@ -450,8 +464,34 @@ pub(crate) async fn run_config_interactive() -> Result<(), ConfigError> {
                     );
                 }
             }
-            // exit
+            // anthropic-workspace-id
             8 => {
+                let old = config.llm.anthropic_workspace_id.as_deref().unwrap_or("");
+                let Some(value) =
+                    read_input_with_esc("  Anthropic workspace ID (empty clears): ", "")?
+                else {
+                    continue;
+                };
+                let parsed = match super::parse_anthropic_workspace_id(&value) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        eprintln!("{yellow}{error}{reset}");
+                        continue;
+                    }
+                };
+                if parsed.as_deref().unwrap_or("") != old {
+                    config.llm.anthropic_workspace_id = parsed;
+                    save_config(&config, &config_file)?;
+                    verify_api_key(
+                        "anthropic",
+                        &config.llm.anthropic_api_key,
+                        config.llm.anthropic_workspace_id.as_deref(),
+                    )
+                    .await;
+                }
+            }
+            // exit
+            9 => {
                 console::Term::stderr().clear_last_lines(1)?;
                 break;
             }
