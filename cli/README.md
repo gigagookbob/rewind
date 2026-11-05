@@ -78,6 +78,8 @@ Auth methods by provider:
 
 ### Change settings
 
+`rwd config`의 대화형 메뉴에서 API 키를 입력하거나 붙여넣으면 원문 대신 `*`가 표시됩니다. Enter로 입력을 마치고 Esc로 취소할 수 있습니다.
+
 ```bash
 rwd config output-path /path/to/vault    # Change output path
 rwd config provider codex                # Change LLM provider

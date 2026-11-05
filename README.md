@@ -24,6 +24,8 @@ cargo clippy           # 린트
 cargo test             # 테스트
 ```
 
+macOS와 Linux에서 `cargo test`를 실행하려면 Python 3도 필요합니다. API 키 입력 테스트는 가상 터미널에 가짜 키를 붙여넣어 원문 노출 여부와 입력 후 터미널 설정 복구를 검사합니다.
+
 ## website/
 
 `rwd`의 정적 랜딩 페이지입니다. 빌드 스텝 없이 파일을 직접 수정합니다. 자세한 내용은 [website/AGENTS.md](website/AGENTS.md) 참고.
