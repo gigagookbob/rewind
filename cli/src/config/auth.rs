@@ -106,6 +106,16 @@ pub(crate) async fn run_auth_status() -> Result<(), ConfigError> {
     let provider = config.llm.provider.as_str();
     let openai_has_key = has_stored_api_key(&config.llm.openai_api_key);
     let anthropic_has_key = has_stored_api_key(&config.llm.anthropic_api_key);
+    if provider == "anthropic" {
+        println!(
+            "Anthropic workspace: {}",
+            config
+                .llm
+                .anthropic_workspace_id()?
+                .as_deref()
+                .unwrap_or("not set (workspace-scoped key required)")
+        );
+    }
 
     println!("{}", crate::messages::auth::provider(provider));
     println!(
@@ -168,7 +178,7 @@ pub(crate) async fn run_auth_status() -> Result<(), ConfigError> {
 /// Verifies provider credentials.
 /// - anthropic/openai: lightweight models endpoint call
 /// - codex: `codex login status` command check
-pub(super) async fn verify_api_key(provider: &str, api_key: &str) {
+pub(super) async fn verify_api_key(provider: &str, api_key: &str, workspace_id: Option<&str>) {
     let dim = "\x1b[2m";
     let green = "\x1b[32m";
     let yellow = "\x1b[33m";
@@ -230,14 +240,13 @@ pub(super) async fn verify_api_key(provider: &str, api_key: &str) {
     };
 
     let result = match provider {
-        "anthropic" => {
-            client
-                .get("https://api.anthropic.com/v1/models")
-                .header("x-api-key", api_key)
-                .header("anthropic-version", "2023-06-01")
-                .send()
-                .await
-        }
+        "anthropic" => match anthropic_verification_request(&client, api_key, workspace_id) {
+            Ok(request) => client.execute(request).await,
+            Err(error) => {
+                eprintln!("\r{yellow}{error}{reset}");
+                return;
+            }
+        },
         "openai" => {
             client
                 .get("https://api.openai.com/v1/models")
@@ -257,10 +266,12 @@ pub(super) async fn verify_api_key(provider: &str, api_key: &str) {
         }
         Ok(resp) => {
             let status = resp.status().as_u16();
-            eprintln!(
-                "\r{yellow}{}{reset}",
-                crate::messages::verify::key_invalid(status)
-            );
+            let message = if provider == "anthropic" {
+                crate::analyzer::anthropic_error::describe(resp).await
+            } else {
+                crate::messages::verify::verification_failed(status)
+            };
+            eprintln!("\r{yellow}{message}{reset}");
         }
         Err(_) => {
             eprintln!(
@@ -269,6 +280,18 @@ pub(super) async fn verify_api_key(provider: &str, api_key: &str) {
             );
         }
     }
+}
+
+fn anthropic_verification_request(
+    client: &reqwest::Client,
+    api_key: &str,
+    workspace_id: Option<&str>,
+) -> Result<reqwest::Request, ConfigError> {
+    let request = client
+        .get("https://api.anthropic.com/v1/models")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01");
+    Ok(crate::analyzer::anthropic::with_workspace(request, workspace_id)?.build()?)
 }
 
 /// Masks an API key for display.
@@ -287,6 +310,34 @@ pub(super) fn mask_api_key(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_anthropic_verification_uses_selected_workspace() {
+        let client = reqwest::Client::new();
+        for workspace in [None, Some("wrkspc_test123")] {
+            let request = anthropic_verification_request(&client, "synthetic", workspace).unwrap();
+            assert_eq!(request.method(), reqwest::Method::GET);
+            assert_eq!(
+                request.url().as_str(),
+                "https://api.anthropic.com/v1/models"
+            );
+            assert_eq!(
+                request
+                    .headers()
+                    .get("anthropic-workspace-id")
+                    .map(|v| v.to_str().unwrap()),
+                workspace
+            );
+        }
+        assert!(
+            anthropic_verification_request(
+                &client,
+                "synthetic",
+                Some("wrkspc_test\nInjected: true")
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn test_provider_auth_method_and_usage_flags() {

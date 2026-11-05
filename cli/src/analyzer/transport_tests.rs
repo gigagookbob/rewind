@@ -70,6 +70,51 @@ fn kinds() -> Vec<ProviderKind> {
 }
 
 #[tokio::test]
+async fn test_anthropic_workspace_config_reaches_every_analysis_request() {
+    let root = std::env::temp_dir().join(format!("rwd-workspace-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("config.toml");
+    for workspace in [None, Some("wrkspc_test123")] {
+        let setting = workspace.map_or(String::new(), |id| {
+            format!("anthropic_workspace_id = '{id}'\n")
+        });
+        std::fs::write(&path, format!(
+            "[llm]\nprovider = 'anthropic'\nanthropic_api_key = 'test-key'\n{setting}[output]\npath = '/synthetic'\n"
+        )).unwrap();
+        let (mut provider, key) = super::provider::load_provider_from_path(&path).unwrap();
+        let recording = Recording::default();
+        recording.0.lock().unwrap().responses = vec![Ok("ok".into()); 3].into();
+        provider.recording = Some(recording.clone());
+        provider
+            .call_analysis_api(&key, "hello", 1, &Lang::En, 100_000)
+            .await
+            .unwrap();
+        provider
+            .call_summary_api(&key, "hello", &Lang::En)
+            .await
+            .unwrap();
+        provider
+            .call_slack_api(&key, "hello", &Lang::En)
+            .await
+            .unwrap();
+        for request in &recording.0.lock().unwrap().requests {
+            let OutboundRequest::Anthropic(request) = request else {
+                panic!("wrong provider")
+            };
+            assert_eq!(
+                request
+                    .headers()
+                    .get("anthropic-workspace-id")
+                    .map(|v| v.to_str().unwrap()),
+                workspace
+            );
+            assert_eq!(request.headers()["x-api-key"], "test-key");
+        }
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_explicit_disable_keeps_all_input_and_system_prompt_is_also_protected() {
     let secret = format!("sk-ant-{}", "b".repeat(40));
     for kind in kinds() {

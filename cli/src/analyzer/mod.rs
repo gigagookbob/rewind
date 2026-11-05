@@ -1,6 +1,7 @@
 // Sends parsed log data to LLM APIs and extracts developer insights.
 
 pub mod anthropic;
+pub(crate) mod anthropic_error;
 pub mod codex_exec;
 pub mod compaction;
 pub mod context;
@@ -120,8 +121,9 @@ fn print_rate_limit_status(
 pub async fn prepare_session_analysis_context() -> Result<SessionAnalysisContext, AnalyzerError> {
     let (provider, api_key) = provider::load_provider()?;
     let sp = start_spinner(crate::messages::status::PROBING_RATE_LIMITS.into());
-    let (rate_limits, probed) = provider.probe_rate_limits(&api_key).await;
+    let result = provider.probe_rate_limits(&api_key).await;
     stop_spinner(sp);
+    let (rate_limits, probed) = result?;
     print_rate_limit_status(&provider, &rate_limits, probed);
 
     Ok(SessionAnalysisContext {

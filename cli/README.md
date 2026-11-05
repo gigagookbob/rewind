@@ -86,6 +86,7 @@ rwd config provider codex                # Change LLM provider
 rwd config api-key sk-...                # Set API key for current provider (openai/anthropic)
 rwd config openai-api-key sk-...         # Set OpenAI API key directly
 rwd config anthropic-api-key sk-ant-...  # Set Anthropic API key directly
+rwd config anthropic-workspace-id wrkspc_... # Select workspace for an organization-scoped key
 rwd config codex-model default           # Use the model configured in Codex CLI
 rwd config codex-reasoning xhigh         # Override Codex reasoning (default: xhigh)
 rwd config claude-include-automated true # Include automated Claude sessions by default
@@ -94,6 +95,29 @@ rwd auth status                          # Show provider auth method + credentia
 rwd reset --dry-run                      # Preview reset targets
 rwd reset --yes                          # Reset local config/cache state
 ```
+
+### Anthropic 조직 범위 API 키
+
+조직 범위 키를 사용하려면 [Claude Console의 워크스페이스 설정](https://platform.claude.com/settings/workspaces)에서 사용할 워크스페이스의 ID를 확인한 뒤 등록합니다.
+
+```bash
+rwd config anthropic-workspace-id wrkspc_실제ID
+rwd auth status
+```
+
+`wrkspc_실제ID`는 복사한 ID로 바꿉니다. `rwd config`의 대화형 메뉴에서도 설정할 수 있습니다. 이 값은 `~/.config/rwd/config.toml`의 `[llm]` 아래 `anthropic_workspace_id`에 저장하며, 분석, 요약, Slack 문구 생성, 호출 한도 확인과 API 키 확인에 함께 사용합니다.
+
+특정 워크스페이스에 연결된 키는 ID를 따로 설정하지 않아도 됩니다. 키를 바꿀 때 기존 설정을 지우려면 다음 명령을 사용합니다.
+
+```bash
+rwd config anthropic-workspace-id ""
+```
+
+워크스페이스 ID가 빠졌거나 크레딧이 부족한 경우에는 해당 원인과 조치 방법을 표시합니다. 인증 실패, 권한 부족, 호출 한도 초과도 구분합니다. 사전 호출에서 인증이나 설정 오류가 확인되면 세션 분석을 시작하지 않습니다. `rwd auth status`는 저장된 설정을 보여 주며, Anthropic API 연결을 검사하지는 않습니다.
+
+오류 응답에는 대화 내용이나 비밀값이 섞일 수 있어 원문을 출력하지 않습니다. 식별한 원인은 정해진 안내 문구로 표시하고, 알 수 없는 오류는 HTTP 상태와 확인 가능한 오류 종류, 요청 ID를 표시합니다. 오류 본문은 최대 16 KiB, 최대 5초 동안만 읽습니다.
+
+요청에 워크스페이스 ID를 지정하는 규칙은 [Anthropic 인증 문서](https://platform.claude.com/docs/en/manage-claude/authentication)를 따릅니다.
 
 ### API keys via environment variables
 

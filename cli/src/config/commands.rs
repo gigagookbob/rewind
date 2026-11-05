@@ -104,6 +104,7 @@ pub(crate) fn run_init() -> Result<(), ConfigError> {
             } else {
                 String::new()
             },
+            anthropic_workspace_id: None,
             legacy_api_key: String::new(),
             codex_model: None,
             codex_reasoning_effort: None,
@@ -182,6 +183,17 @@ pub(crate) fn run_config(key: &str, value: &str) -> Result<(), ConfigError> {
                     "Anthropic",
                     &mask_api_key(value),
                 )
+            );
+        }
+        "anthropic-workspace-id" => {
+            config.llm.anthropic_workspace_id = super::parse_anthropic_workspace_id(value)?;
+            eprintln!(
+                "Anthropic workspace: {}",
+                config
+                    .llm
+                    .anthropic_workspace_id
+                    .as_deref()
+                    .unwrap_or("not set")
             );
         }
         "codex-model" => {

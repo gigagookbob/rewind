@@ -65,6 +65,9 @@ pub struct LlmConfig {
     pub openai_api_key: String,
     #[serde(default)]
     pub anthropic_api_key: String,
+    /// Required for organization-scoped Anthropic keys; omitted for workspace keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anthropic_workspace_id: Option<String>,
     /// Legacy single API key field (`api_key`) kept only for migration.
     #[serde(default, rename = "api_key", skip_serializing)]
     pub legacy_api_key: String,
@@ -75,6 +78,10 @@ pub struct LlmConfig {
 }
 
 impl LlmConfig {
+    pub(crate) fn anthropic_workspace_id(&self) -> Result<Option<String>, ConfigError> {
+        parse_anthropic_workspace_id(self.anthropic_workspace_id.as_deref().unwrap_or(""))
+    }
+
     /// Returns API key for the given provider.
     fn api_key_for_provider(&self, provider: &str) -> &str {
         match provider {
@@ -143,6 +150,21 @@ impl LlmConfig {
 
         changed
     }
+}
+
+/// Validate before storing or sending a workspace ID; never echo invalid input.
+pub(crate) fn parse_anthropic_workspace_id(value: &str) -> Result<Option<String>, ConfigError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if !value
+        .strip_prefix("wrkspc_")
+        .is_some_and(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+    {
+        return Err("Anthropic workspace ID must start with wrkspc_ followed by letters or digits; use an empty value to clear it".into());
+    }
+    Ok(Some(value.to_string()))
 }
 
 /// Markdown output settings.
@@ -360,6 +382,7 @@ mod tests {
                 provider: "anthropic".to_string(),
                 openai_api_key: String::new(),
                 anthropic_api_key: "sk-test-key".to_string(),
+                anthropic_workspace_id: None,
                 legacy_api_key: String::new(),
                 codex_model: None,
                 codex_reasoning_effort: None,
@@ -626,6 +649,7 @@ include_print_mode = true
                 provider: "anthropic".to_string(),
                 openai_api_key: String::new(),
                 anthropic_api_key: "sk-test".to_string(),
+                anthropic_workspace_id: None,
                 legacy_api_key: String::new(),
                 codex_model: None,
                 codex_reasoning_effort: None,
