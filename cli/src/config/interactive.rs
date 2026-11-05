@@ -7,8 +7,41 @@ use super::{
     Config, ConfigError, DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT, Lang, RedactorConfig,
     config_path, load_config, parse_codex_model_value, parse_reasoning_effort, save_config,
 };
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, is_raw_mode_enabled};
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Select};
+
+/// Keep echo disabled between key reads, including while pasted input is queued.
+struct PasswordRawMode {
+    restore: bool,
+}
+
+impl PasswordRawMode {
+    fn new() -> std::io::Result<Self> {
+        let restore = !is_raw_mode_enabled()?;
+        enable_raw_mode()?;
+        Ok(Self { restore })
+    }
+
+    fn restore(&mut self) -> std::io::Result<()> {
+        if self.restore {
+            disable_raw_mode()?;
+            self.restore = false;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for PasswordRawMode {
+    fn drop(&mut self) {
+        // Also restore on early returns and unwinding; normal completion reports errors.
+        let _ = self.restore();
+    }
+}
+
+#[cfg(all(test, unix))]
+#[path = "terminal_tests.rs"]
+mod terminal_tests;
 
 /// Reads a line of terminal input with Esc-to-cancel support.
 ///
@@ -22,16 +55,25 @@ fn read_line_with_esc(
 ) -> Result<Option<String>, ConfigError> {
     use console::{Key, Term};
     let term = Term::stderr();
-    eprint!("{prompt}");
+    term.write_str(prompt)?;
     let mut input = String::new();
     loop {
-        match term.read_key()? {
+        let key = if mask {
+            term.read_key_raw()?
+        } else {
+            term.read_key()?
+        };
+        match key {
             Key::Escape => {
-                term.write_line("")?;
+                if !mask {
+                    term.write_line("")?;
+                }
                 return Ok(None);
             }
             Key::Enter => {
-                term.write_line("")?;
+                if !mask {
+                    term.write_line("")?;
+                }
                 let value = match default {
                     Some(default) if input.is_empty() => default.to_string(),
                     _ => input,
@@ -44,9 +86,10 @@ fn read_line_with_esc(
                     term.clear_chars(1)?;
                 }
             }
-            Key::Char(c) if mask => {
+            Key::CtrlC => return Err(std::io::Error::from(std::io::ErrorKind::Interrupted).into()),
+            Key::Char(c) if mask && !c.is_ascii_control() => {
                 input.push(c);
-                eprint!("*");
+                term.write_str("*")?;
             }
             Key::Char(c) if !c.is_ascii_control() => {
                 input.push(c);
@@ -62,7 +105,15 @@ fn read_input_with_esc(prompt: &str, default: &str) -> Result<Option<String>, Co
 }
 
 fn read_password_with_esc(prompt: &str) -> Result<Option<String>, ConfigError> {
-    read_line_with_esc(prompt, None, true)
+    let term = console::Term::stderr();
+    if !term.is_term() {
+        return Err(std::io::Error::other("Password input requires a terminal").into());
+    }
+    let mut raw_mode = PasswordRawMode::new()?;
+    let result = read_line_with_esc(prompt, None, true);
+    raw_mode.restore()?;
+    term.write_line("")?;
+    result
 }
 
 /// Interactive flow for changing a provider API key: prompt, confirm, save, verify.
