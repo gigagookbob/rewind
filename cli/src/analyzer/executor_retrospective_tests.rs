@@ -7,10 +7,6 @@ async fn test_retrospective_all_providers_languages_and_summary_paths_validate_o
     for kind in [
         provider::ProviderKind::Anthropic,
         provider::ProviderKind::OpenAi,
-        provider::ProviderKind::Codex {
-            model: "fake".into(),
-            reasoning_effort: "low".into(),
-        },
     ] {
         for lang in [crate::config::Lang::Ko, crate::config::Lang::En] {
             for summarize in [false, true] {

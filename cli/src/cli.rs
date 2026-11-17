@@ -23,9 +23,7 @@ Examples:
   rwd init                          Set up provider credentials and output path
   rwd config                        Interactive settings menu
   rwd config output-path ~/vault    Set Obsidian vault path
-  rwd config provider codex         Switch LLM provider
-  rwd config codex-model default    Use the model configured in Codex
-  rwd config codex-reasoning xhigh  Set Codex reasoning effort
+  rwd config provider openai        Switch LLM provider
   rwd config claude-include-automated true  Include automated Claude sessions by default
   rwd config api-key sk-...         Set API key for current provider
   rwd config openai-api-key sk-...  Set OpenAI API key
@@ -114,15 +112,13 @@ Examples:
 Examples:
   rwd config                        Interactive settings menu
   rwd config output-path ~/vault    Set Obsidian vault path
-  rwd config provider codex         Switch LLM provider
+  rwd config provider openai        Switch LLM provider
   rwd config api-key sk-...         Set API key for current provider (openai/anthropic)
   rwd config openai-api-key sk-...  Set OpenAI API key
   rwd config anthropic-api-key ...  Set Anthropic API key
-  rwd config codex-model default    Use the model configured in Codex
-  rwd config codex-reasoning xhigh  Set Codex reasoning effort
   rwd config claude-include-automated true  Include automated Claude sessions by default")]
     Config {
-        /// Config key (output-path, provider, api-key, openai-api-key, anthropic-api-key, codex-model, codex-reasoning, claude-include-automated)
+        /// Config key (output-path, provider, api-key, openai-api-key, anthropic-api-key, claude-include-automated)
         key: Option<String>,
         /// Value to set
         value: Option<String>,

@@ -68,13 +68,10 @@ rwd init
 ```
 
 Sets up your LLM provider, credentials, output path, and language preference.
-If you choose `codex`, `rwd` uses your existing `codex login` session (no API key required).
 Obsidian vault is auto-detected if available.
 Config is stored at `~/.config/rwd/config.toml`.
 
-Auth methods by provider:
-- `anthropic`, `openai`: API key auth
-- `codex`: Codex login session auth (`codex login`)
+Supported providers are `anthropic` and `openai`. Both use API key auth.
 
 ### Change settings
 
@@ -82,13 +79,11 @@ Auth methods by provider:
 
 ```bash
 rwd config output-path /path/to/vault    # Change output path
-rwd config provider codex                # Change LLM provider
+rwd config provider openai               # Change LLM provider
 rwd config api-key sk-...                # Set API key for current provider (openai/anthropic)
 rwd config openai-api-key sk-...         # Set OpenAI API key directly
 rwd config anthropic-api-key sk-ant-...  # Set Anthropic API key directly
 rwd config anthropic-workspace-id wrkspc_... # Select workspace for an organization-scoped key
-rwd config codex-model default           # Use the model configured in Codex CLI
-rwd config codex-reasoning xhigh         # Override Codex reasoning (default: xhigh)
 rwd config claude-include-automated true # Include automated Claude sessions by default
 rwd config lang ko                       # Change output language (en/ko)
 rwd auth status                          # Show provider auth method + credential state
@@ -153,7 +148,7 @@ enabled = false
 
 인용은 원문과 보호된 입력에 모두 존재해야 합니다. 비밀값이 포함된 인용이나 마스킹 표식으로 바뀐 인용은 근거로 인정하지 않으며 원래 비밀값을 복원하지 않습니다. 기존 캐시는 전송 전에 보호하지만 파일 자체를 일괄 수정하지 않습니다.
 
-탐지 규칙은 임의의 모든 비밀값을 보장하지 않습니다. 예를 들어 환경 변수 형태의 값은 기존 규칙대로 따옴표로 감싼 `password`, `secret`, `api_key` 할당을 검사합니다. 메시지를 이어 탐지하므로 인접한 일반 문장이 더 가려질 수 있고, 끝 표시 없는 개인키는 남은 입력을 보수적으로 가립니다. 공급자 오류 본문, JSON 파싱 실패의 응답 미리보기와 Codex 실패 출력은 오류에 그대로 싣지 않습니다.
+탐지 규칙은 임의의 모든 비밀값을 보장하지 않습니다. 예를 들어 환경 변수 형태의 값은 기존 규칙대로 따옴표로 감싼 `password`, `secret`, `api_key` 할당을 검사합니다. 메시지를 이어 탐지하므로 인접한 일반 문장이 더 가려질 수 있고, 끝 표시 없는 개인키는 남은 입력을 보수적으로 가립니다. 공급자 오류 본문과 JSON 파싱 실패의 응답 미리보기는 오류에 그대로 싣지 않습니다.
 
 ## Usage
 
@@ -212,7 +207,7 @@ AI는 입력에 붙인 `m1` 같은 발언 ID와 원문 인용만 반환합니다
 
 중간 조각은 빠질 수 있습니다. 예를 들어 여덟 조각이면 1, 7, 8번을 보내고 2..=6번은 제외합니다. 이 범위와 전체 조각 수를 터미널과 분석 입력에 알리고, 모델 응답 뒤에도 작업 요약 앞에 부분 분석 표시를 붙입니다. 표시는 JSON 캐시와 일일 Markdown에 남습니다. 제외 구간에만 있는 결정이나 정정은 확인하지 못하므로 전체 세션을 분석한 결과로 읽으면 안 됩니다.
 
-중간 요약 호출은 실행 시도당 최대 세 번이며 각 출력 요청 상한은 2,000토큰입니다. 입력은 호출당 추정 30,000토큰과 공급자의 분당 입력 한도 중 작은 값 안에서 프롬프트, 조각 번호, 역할과 발언 ID를 포함합니다. Codex는 기존 문자 상한도 함께 적용합니다. 긴 발언은 나눈 모든 부분에 원래 ID를 유지합니다. 토큰 수는 문자 수로 추정하므로 공급자의 실제 계산과 다를 수 있습니다.
+중간 요약 호출은 실행 시도당 최대 세 번이며 각 출력 요청 상한은 2,000토큰입니다. 입력은 호출당 추정 30,000토큰과 공급자의 분당 입력 한도 중 작은 값 안에서 프롬프트, 조각 번호, 역할과 발언 ID를 포함합니다. 긴 발언은 나눈 모든 부분에 원래 ID를 유지합니다. 토큰 수는 문자 수로 추정하므로 공급자의 실제 계산과 다를 수 있습니다.
 
 합친 요약이 최종 분석의 입력 제한을 넘거나 요약이 비어 있으면 내용을 잘라 성공으로 처리하지 않고 오류를 반환합니다. 기존 재시도는 최대 한 번이므로 재시도까지 발생하면 중간 요약은 최대 여섯 번, 최종 분석은 최대 두 번 호출할 수 있습니다. 짧은 세션은 기존처럼 직접 분석합니다. 이전 맥락 정책이 없는 구 캐시는 다음 분석 명령에서 한 번 갱신합니다. 그 뒤에도 강제로 다시 분석하려면 `--no-cache`를 사용합니다.
 

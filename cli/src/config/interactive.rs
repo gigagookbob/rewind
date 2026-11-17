@@ -3,10 +3,7 @@
 use super::auth::{
     mask_api_key, print_provider_switch_guidance, provider_auth_method, verify_api_key,
 };
-use super::{
-    Config, ConfigError, DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT, Lang, RedactorConfig,
-    config_path, load_config, parse_codex_model_value, parse_reasoning_effort, save_config,
-};
+use super::{Config, ConfigError, Lang, RedactorConfig, config_path, load_config, save_config};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, is_raw_mode_enabled};
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Select};
@@ -189,16 +186,6 @@ pub(crate) async fn run_config_interactive() -> Result<(), ConfigError> {
         } else {
             "off"
         };
-        let codex_model = config
-            .llm
-            .codex_model
-            .as_deref()
-            .unwrap_or(DEFAULT_CODEX_MODEL);
-        let codex_reasoning = config
-            .llm
-            .codex_reasoning_effort
-            .as_deref()
-            .unwrap_or(DEFAULT_CODEX_REASONING_EFFORT);
         let openai_detail = if config.llm.provider == "openai" {
             "active"
         } else {
@@ -222,8 +209,6 @@ pub(crate) async fn run_config_interactive() -> Result<(), ConfigError> {
                 "{cyan}anthropic-api-key{reset} {dim}[{} ({anthropic_detail})]{reset}",
                 mask_api_key(&config.llm.anthropic_api_key)
             ),
-            format!("{cyan}codex-model{reset}   {dim}[{codex_model}]{reset}"),
-            format!("{cyan}codex-reasoning{reset} {dim}[{codex_reasoning}]{reset}"),
             format!(
                 "{cyan}output-path{reset}   {dim}[{}]{reset}",
                 config.output.path
@@ -265,7 +250,7 @@ pub(crate) async fn run_config_interactive() -> Result<(), ConfigError> {
             // provider
             0 => {
                 let old = config.llm.provider.clone();
-                let providers = ["anthropic", "openai", "codex"];
+                let providers = ["anthropic", "openai"];
                 let current_idx = providers.iter().position(|&p| p == old).unwrap_or(0);
 
                 let Some(chosen) = Select::with_theme(&theme)
@@ -320,71 +305,8 @@ pub(crate) async fn run_config_interactive() -> Result<(), ConfigError> {
                 )
                 .await?;
             }
-            // codex-model
-            3 => {
-                let old_effective = config
-                    .llm
-                    .codex_model
-                    .as_deref()
-                    .unwrap_or(DEFAULT_CODEX_MODEL)
-                    .to_string();
-                let prompt = format!("  Codex model ({old_effective}): ");
-                let Some(new_value) = read_input_with_esc(&prompt, &old_effective)? else {
-                    continue;
-                };
-                let parsed = parse_codex_model_value(&new_value);
-                let new_effective = parsed.as_deref().unwrap_or(DEFAULT_CODEX_MODEL).to_string();
-
-                if new_effective == old_effective {
-                    eprintln!("{dim}{}{reset}\n", crate::messages::config::NO_CHANGE);
-                } else {
-                    config.llm.codex_model = parsed;
-                    save_config(&config, &config_file)?;
-                    eprintln!(
-                        "{green}{}{reset}\n",
-                        crate::messages::config::changed(&old_effective, &new_effective)
-                    );
-                }
-            }
-            // codex-reasoning
-            4 => {
-                let old_effective = config
-                    .llm
-                    .codex_reasoning_effort
-                    .as_deref()
-                    .unwrap_or(DEFAULT_CODEX_REASONING_EFFORT)
-                    .to_string();
-                let prompt = format!(
-                    "  Codex reasoning effort ({old_effective}) [low/medium/high/xhigh/default]: "
-                );
-                let Some(new_value) = read_input_with_esc(&prompt, &old_effective)? else {
-                    continue;
-                };
-                let parsed = match parse_reasoning_effort(&new_value) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        eprintln!("{yellow}{e}{reset}\n");
-                        continue;
-                    }
-                };
-                let new_effective = parsed
-                    .as_deref()
-                    .unwrap_or(DEFAULT_CODEX_REASONING_EFFORT)
-                    .to_string();
-
-                if new_effective == old_effective {
-                    eprintln!("{dim}{}{reset}\n", crate::messages::config::NO_CHANGE);
-                } else {
-                    config.llm.codex_reasoning_effort = parsed;
-                    save_config(&config, &config_file)?;
-                    eprintln!(
-                        "{green}{}{reset}\n",
-                        crate::messages::config::changed(&old_effective, &new_effective)
-                    );
-                }
-            }
             // output-path
-            5 => {
+            3 => {
                 let old = config.output.path.clone();
                 let prompt = format!("  {} ({old}): ", crate::messages::config::OUTPUT_PATH);
                 let Some(new_path) = read_input_with_esc(&prompt, &old)? else {
@@ -403,7 +325,7 @@ pub(crate) async fn run_config_interactive() -> Result<(), ConfigError> {
                 }
             }
             // redactor
-            6 => {
+            4 => {
                 let old_enabled = config.is_redactor_enabled();
                 let options = ["on", "off"];
                 let current_idx = if old_enabled { 0 } else { 1 };
@@ -432,7 +354,7 @@ pub(crate) async fn run_config_interactive() -> Result<(), ConfigError> {
                 }
             }
             // lang
-            7 => {
+            5 => {
                 let langs = ["en", "ko"];
                 let current_idx = config.lang.as_ref().map_or(0, |l| match l {
                     Lang::En => 0,
@@ -465,7 +387,7 @@ pub(crate) async fn run_config_interactive() -> Result<(), ConfigError> {
                 }
             }
             // anthropic-workspace-id
-            8 => {
+            6 => {
                 let old = config.llm.anthropic_workspace_id.as_deref().unwrap_or("");
                 let Some(value) =
                     read_input_with_esc("  Anthropic workspace ID (empty clears): ", "")?
@@ -491,7 +413,7 @@ pub(crate) async fn run_config_interactive() -> Result<(), ConfigError> {
                 }
             }
             // exit
-            9 => {
+            7 => {
                 console::Term::stderr().clear_last_lines(1)?;
                 break;
             }

@@ -141,10 +141,6 @@ async fn test_direct_and_retries_mask_actual_requests_and_count_original_once() 
     for kind in [
         provider::ProviderKind::Anthropic,
         provider::ProviderKind::OpenAi,
-        provider::ProviderKind::Codex {
-            model: "fake".into(),
-            reasoning_effort: "low".into(),
-        },
     ] {
         for enabled in [true, false] {
             for first in [
@@ -297,66 +293,9 @@ async fn test_quotes_require_both_original_and_protected_speech_and_cache_uses_s
     );
 }
 
-#[tokio::test]
-async fn test_codex_process_rate_error_is_safe_and_retried() {
-    use super::super::transport_tests::fake_provider;
-    use std::os::unix::process::ExitStatusExt;
+#[test]
+fn test_json_parse_error_is_safe_and_classified() {
     let secret = format!("sk-proj-{}", "c".repeat(40));
-    for stdout in [
-        serde_json::json!({"type":"turn.failed","error":{"message":format!("HTTP 429 {secret}")}})
-            .to_string(),
-        serde_json::json!({"type":"error","message":format!("rate limit exceeded {secret}")})
-            .to_string(),
-    ] {
-        let output = std::process::Output {
-            status: std::process::ExitStatus::from_raw(256),
-            stdout: stdout.into_bytes(),
-            stderr: secret.as_bytes().to_vec(),
-        };
-        let error = super::super::codex_exec::parse_output(output)
-            .unwrap_err()
-            .to_string();
-        assert!(!error.contains(&secret));
-        assert_eq!(classify_retry_action(&error), RetryAction::RateLimit429);
-        let (provider, recorded) = fake_provider(
-            provider::ProviderKind::Codex {
-                model: "fake".into(),
-                reasoning_effort: "low".into(),
-            },
-            true,
-            vec![
-                Err(error),
-                Ok(serde_json::to_string(&sample_analysis("s1")).unwrap()),
-            ],
-        );
-        let task = planned(vec![("USER".into(), secret.clone())], StepStrategy::Direct);
-        run_planned_task(
-            task,
-            &provider,
-            "",
-            &sample_limits(1000, 100_000),
-            &crate::config::Lang::En,
-        )
-        .await
-        .unwrap();
-        assert_eq!(recorded.payloads().len(), 2);
-        assert!(
-            recorded
-                .payloads()
-                .iter()
-                .all(|text| !text.contains(&secret))
-        );
-    }
-    let output = std::process::Output {
-        status: std::process::ExitStatus::from_raw(256),
-        stdout: secret.as_bytes().to_vec(),
-        stderr: secret.as_bytes().to_vec(),
-    };
-    let error = super::super::codex_exec::parse_output(output)
-        .unwrap_err()
-        .to_string();
-    assert!(!error.contains(&secret));
-    assert_eq!(classify_retry_action(&error), RetryAction::None);
     let json_error = insight::parse_response(&format!("{{\"sessions\":\"{secret}\"}}"))
         .unwrap_err()
         .to_string();

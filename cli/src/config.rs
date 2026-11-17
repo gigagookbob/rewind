@@ -15,9 +15,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 pub type ConfigError = Box<dyn std::error::Error>;
-/// Let Codex use its configured model unless the user explicitly overrides it.
-pub const DEFAULT_CODEX_MODEL: &str = "default";
-pub const DEFAULT_CODEX_REASONING_EFFORT: &str = "xhigh";
 
 /// Supported languages for LLM output.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,10 +68,6 @@ pub struct LlmConfig {
     /// Legacy single API key field (`api_key`) kept only for migration.
     #[serde(default, rename = "api_key", skip_serializing)]
     pub legacy_api_key: String,
-    #[serde(default)]
-    pub codex_model: Option<String>,
-    #[serde(default)]
-    pub codex_reasoning_effort: Option<String>,
 }
 
 impl LlmConfig {
@@ -324,39 +317,11 @@ pub fn resolve_env_placeholders(template: &str) -> Result<String, ConfigError> {
     Ok(out)
 }
 
-/// Parses codex model config value.
-/// "default" (case-insensitive) resets to built-in default.
-fn parse_codex_model_value(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
 fn parse_bool_toggle(value: &str, key_name: &str) -> Result<bool, ConfigError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "true" | "1" | "yes" | "on" => Ok(true),
         "false" | "0" | "no" | "off" => Ok(false),
         _ => Err(format!("Invalid value for `{key_name}`: '{value}'. Use true/false.").into()),
-    }
-}
-
-/// Parses codex reasoning effort config value.
-/// Returns None when value is "default".
-fn parse_reasoning_effort(value: &str) -> Result<Option<String>, ConfigError> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
-        return Ok(None);
-    }
-
-    let normalized = trimmed.to_ascii_lowercase();
-    let allowed = ["low", "medium", "high", "xhigh"];
-    if allowed.contains(&normalized.as_str()) {
-        Ok(Some(normalized))
-    } else {
-        Err(crate::messages::config::unsupported_reasoning_effort(trimmed).into())
     }
 }
 
@@ -384,8 +349,6 @@ mod tests {
                 anthropic_api_key: "sk-test-key".to_string(),
                 anthropic_workspace_id: None,
                 legacy_api_key: String::new(),
-                codex_model: None,
-                codex_reasoning_effort: None,
             },
             output: OutputConfig {
                 path: "/tmp/vault".to_string(),
@@ -401,8 +364,6 @@ mod tests {
         assert_eq!(loaded.llm.provider, "anthropic");
         assert_eq!(loaded.llm.openai_api_key, "");
         assert_eq!(loaded.llm.anthropic_api_key, "sk-test-key");
-        assert_eq!(loaded.llm.codex_model, None);
-        assert_eq!(loaded.llm.codex_reasoning_effort, None);
         assert_eq!(loaded.output.path, "/tmp/vault");
         assert_eq!(loaded.lang, Some(Lang::En));
 
@@ -651,8 +612,6 @@ include_print_mode = true
                 anthropic_api_key: "sk-test".to_string(),
                 anthropic_workspace_id: None,
                 legacy_api_key: String::new(),
-                codex_model: None,
-                codex_reasoning_effort: None,
             },
             output: OutputConfig {
                 path: "/tmp/vault".to_string(),
@@ -668,41 +627,7 @@ include_print_mode = true
     }
 
     #[test]
-    fn test_parse_codex_model_default_returns_none() {
-        assert_eq!(parse_codex_model_value("default"), None);
-        assert_eq!(parse_codex_model_value(""), None);
-        assert_eq!(
-            parse_codex_model_value("gpt-5.4"),
-            Some("gpt-5.4".to_string())
-        );
-    }
-
-    #[test]
-    fn test_parse_reasoning_effort_valid_values() {
-        assert_eq!(
-            parse_reasoning_effort("xhigh").expect("parse"),
-            Some("xhigh".to_string())
-        );
-        assert_eq!(
-            parse_reasoning_effort("HIGH").expect("parse"),
-            Some("high".to_string())
-        );
-    }
-
-    #[test]
-    fn test_parse_reasoning_effort_default_returns_none() {
-        assert_eq!(parse_reasoning_effort("default").expect("parse"), None);
-        assert_eq!(parse_reasoning_effort("").expect("parse"), None);
-    }
-
-    #[test]
-    fn test_parse_reasoning_effort_invalid_returns_error() {
-        let result = parse_reasoning_effort("turbo");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_config_llm_codex_fields_parse_when_present() {
+    fn test_config_with_removed_codex_fields_still_loads_and_drops_them() {
         let toml_str = r#"
 [llm]
 provider = "codex"
@@ -716,8 +641,9 @@ path = "/tmp/vault"
 "#;
         let config: Config = toml::from_str(toml_str).expect("parse");
         assert_eq!(config.llm.provider, "codex");
-        assert_eq!(config.llm.codex_model.as_deref(), Some("gpt-5.4"));
-        assert_eq!(config.llm.codex_reasoning_effort.as_deref(), Some("xhigh"));
+        let saved = toml::to_string_pretty(&config).expect("serialize");
+        assert!(!saved.contains("codex_model"));
+        assert!(!saved.contains("codex_reasoning_effort"));
     }
 
     #[test]
@@ -757,7 +683,7 @@ path = "/tmp/vault"
 
         let legacy_toml = r#"
 [llm]
-provider = "codex"
+provider = "openai"
 api_key = "sk-ant-legacy"
 
 [output]

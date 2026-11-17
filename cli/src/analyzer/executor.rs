@@ -76,7 +76,6 @@ fn classify_retry_action(err_msg: &str) -> RetryAction {
 
 /// Computes dynamic concurrency for session execution.
 fn dynamic_parallelism(
-    provider: &provider::LlmProvider,
     limits: &planner::RateLimits,
     max_estimated_tokens: u64,
     session_count: usize,
@@ -85,10 +84,7 @@ fn dynamic_parallelism(
         return 0;
     }
 
-    let provider_cap = match &provider.kind {
-        provider::ProviderKind::Codex { .. } => 2,
-        _ => 4,
-    };
+    let provider_cap = 4;
 
     let rate_cap = match limits.requests_per_minute {
         0..=19 => 1,
@@ -152,7 +148,7 @@ pub(super) async fn execute_plan_parallel(
         .map(|task| task.estimated_tokens)
         .max()
         .unwrap_or(0);
-    let parallelism = dynamic_parallelism(provider, &plan.rate_limits, max_estimated, total_steps);
+    let parallelism = dynamic_parallelism(&plan.rate_limits, max_estimated, total_steps);
 
     if verbose {
         eprintln!("• Parallel session workers: {parallelism}");
@@ -420,12 +416,8 @@ async fn summarize_session_messages(
         return Err(format!("No conversation messages in session {session_id}").into());
     }
 
-    let chunk_prompt = summarizer::get_chunk_summarize_prompt(lang);
-    let max_chunk_chars = provider
-        .max_conversation_chars_with_prompt(chunk_prompt)
-        .unwrap_or(usize::MAX);
     let (tokens, chars) =
-        summarizer::chunk_input_budgets(limits.input_tokens_per_minute, max_chunk_chars, lang)?;
+        summarizer::chunk_input_budgets(limits.input_tokens_per_minute, usize::MAX, lang)?;
     let chunks = summarizer::split_into_chunks(messages, tokens, chars)?;
     summarizer::summarize_chunks(&chunks, provider, api_key, limits, lang).await
 }
@@ -532,29 +524,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_combined_summary_input_respects_codex_character_cap() {
-        let provider = provider::LlmProvider::new(
-            provider::ProviderKind::Codex {
-                model: "test".into(),
-                reasoning_effort: "low".into(),
-            },
-            true,
-        );
-        for lang in [crate::config::Lang::Ko, crate::config::Lang::En] {
-            let system = match lang {
-                crate::config::Lang::Ko => include_str!("../../prompts/system_ko.md"),
-                crate::config::Lang::En => include_str!("../../prompts/system_en.md"),
-            };
-            let cap = provider.max_conversation_chars_with_prompt(system).unwrap();
-            let limits = sample_limits(50, 1_000_000);
-            assert!(check_analysis_input(&"가".repeat(cap), &provider, &limits, &lang).is_ok());
-            assert!(
-                check_analysis_input(&"가".repeat(cap + 1), &provider, &limits, &lang).is_err()
-            );
-        }
-    }
-
     fn sample_outcome(index: usize, session_id: &str) -> PlannedSessionOutcome {
         PlannedSessionOutcome {
             index,
@@ -569,29 +538,14 @@ mod tests {
     }
 
     #[test]
-    fn test_dynamic_parallelism_codex_is_capped_to_two() {
-        let provider = provider::LlmProvider::new(
-            provider::ProviderKind::Codex {
-                model: "gpt-5.4".to_string(),
-                reasoning_effort: "xhigh".to_string(),
-            },
-            true,
-        );
-        let p = dynamic_parallelism(&provider, &sample_limits(1_000, 1_000_000), 10_000, 10);
-        assert_eq!(p, 2);
-    }
-
-    #[test]
     fn test_dynamic_parallelism_rate_cap_applies_for_api() {
-        let provider = provider::LlmProvider::new(provider::ProviderKind::OpenAi, true);
-        let p = dynamic_parallelism(&provider, &sample_limits(30, 1_000_000), 10_000, 10);
+        let p = dynamic_parallelism(&sample_limits(30, 1_000_000), 10_000, 10);
         assert_eq!(p, 2);
     }
 
     #[test]
     fn test_dynamic_parallelism_token_cap_for_large_sessions() {
-        let provider = provider::LlmProvider::new(provider::ProviderKind::Anthropic, true);
-        let p = dynamic_parallelism(&provider, &sample_limits(1_000, 30_000), 20_000, 10);
+        let p = dynamic_parallelism(&sample_limits(1_000, 30_000), 20_000, 10);
         assert_eq!(p, 1);
     }
 

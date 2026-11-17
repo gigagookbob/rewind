@@ -1,4 +1,4 @@
-//! Fake transport receives the same built HTTP requests and Codex stdin as production.
+//! Fake transport receives the same built HTTP requests as production.
 
 use super::provider::{LlmProvider, OutboundRequest, ProviderKind};
 use super::{AnalyzerError, ApiUsage};
@@ -40,7 +40,6 @@ impl Recording {
                 OutboundRequest::Anthropic(r) | OutboundRequest::OpenAi(r) => {
                     String::from_utf8(r.body().unwrap().as_bytes().unwrap().to_vec()).unwrap()
                 }
-                OutboundRequest::Codex { stdin, .. } => stdin.clone(),
             })
             .collect()
     }
@@ -59,14 +58,7 @@ pub(super) fn fake_provider(
 }
 
 fn kinds() -> Vec<ProviderKind> {
-    vec![
-        ProviderKind::Anthropic,
-        ProviderKind::OpenAi,
-        ProviderKind::Codex {
-            model: "fake".into(),
-            reasoning_effort: "low".into(),
-        },
-    ]
+    vec![ProviderKind::Anthropic, ProviderKind::OpenAi]
 }
 
 #[tokio::test]
@@ -138,8 +130,7 @@ async fn test_explicit_disable_keeps_all_input_and_system_prompt_is_also_protect
 async fn test_expansion_is_checked_before_transport_without_truncation() {
     let text = "xoxb-a ".repeat(100);
     for kind in kinds() {
-        let budget =
-            super::prompt::estimate_tokens(&super::codex_exec::compose_prompt("system", &text));
+        let budget = super::prompt::estimate_tokens(&format!("system\n{text}"));
         let (provider, recorded) = fake_provider(kind.clone(), true, vec![]);
         let error = provider
             .call_text_api("auth", "system", &text, 1, budget)
@@ -167,7 +158,7 @@ fn test_missing_invalid_or_unreadable_config_never_disables_protection() {
     let path = root.join("config.toml");
     assert!(super::provider::load_provider_from_path(&root.join("missing")).is_err());
     assert!(super::provider::load_provider_from_path(&root).is_err());
-    let base = "[llm]\nprovider = 'codex'\n[output]\npath = '/synthetic'\n";
+    let base = "[llm]\nprovider = 'openai'\n[output]\npath = '/synthetic'\n";
     for (extra, expected) in [
         ("", true),
         ("[redactor]\nenabled = true", true),
@@ -197,33 +188,6 @@ fn test_missing_invalid_or_unreadable_config_never_disables_protection() {
             .contains("sk-proj-")
     );
     std::fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn test_codex_checks_full_stdin_and_system_prompt_even_with_empty_conversation() {
-    let kind = kinds().pop().unwrap();
-    let (provider, recorded) = fake_provider(kind, true, vec![Ok("ok".into())]);
-    let cap = provider
-        .max_conversation_chars_with_prompt("system")
-        .unwrap();
-    provider
-        .call_text_api("", "system", &"가".repeat(cap), 1, 1_000_000)
-        .await
-        .unwrap();
-    assert!(
-        provider
-            .call_text_api("", "system", &"가".repeat(cap + 1), 1, 1_000_000)
-            .await
-            .is_err()
-    );
-    assert!(
-        provider
-            .call_text_api("", &"가".repeat(1_048_576), "", 1, 1_000_000)
-            .await
-            .is_err()
-    );
-    assert_eq!(recorded.payloads().len(), 1);
-    assert_eq!(recorded.payloads()[0].chars().count() + 8_192, 1_048_576);
 }
 
 #[tokio::test]
@@ -275,13 +239,25 @@ async fn test_all_provider_payloads_mask_cache_summaries_and_keep_authentication
                 OutboundRequest::OpenAi(r) => {
                     assert_eq!(r.headers()["authorization"], format!("Bearer {secret}"))
                 }
-                OutboundRequest::Codex {
-                    stdin, json_output, ..
-                } => {
-                    assert!(stdin.starts_with("[System Instructions]\n"));
-                    assert!(!json_output);
-                }
             }
         }
     }
+}
+
+#[test]
+fn test_removed_codex_provider_config_is_rejected_with_guidance() {
+    let root = std::env::temp_dir().join(format!("rwd-removed-codex-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("config.toml");
+    std::fs::write(
+        &path,
+        "[llm]\nprovider = 'codex'\ncodex_model = 'gpt-5.4'\ncodex_reasoning_effort = 'xhigh'\n[output]\npath = '/synthetic'\n",
+    )
+    .unwrap();
+    let error = super::provider::load_provider_from_path(&path)
+        .err()
+        .unwrap()
+        .to_string();
+    assert_eq!(error, crate::messages::error::CODEX_PROVIDER_REMOVED);
+    std::fs::remove_dir_all(root).unwrap();
 }
