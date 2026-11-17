@@ -239,7 +239,9 @@ pub fn validate(
             resolve(&mut item.evidence, catalog) && has_target_user(&item.evidence)
         });
         session.til.retain_mut(|item| {
-            resolve(&mut item.evidence, catalog) && has_target_user(&item.evidence)
+            resolve(&mut item.evidence, catalog)
+                && has_target_user(&item.evidence)
+                && !only_questions(&item.evidence, catalog)
         });
         session.corrections.retain_mut(|item| {
             resolve(&mut item.evidence, catalog)
@@ -295,6 +297,52 @@ pub fn validate_summary(
 
 fn has_target_user(evidence: &[Evidence]) -> bool {
     evidence.iter().any(|e| e.role == "USER" && !e.is_reference)
+}
+
+/// The prompt forbids confirming a learning from a question alone. Enforce the
+/// common case locally: every target-day USER quote sits in question sentences.
+fn only_questions(evidence: &[Evidence], catalog: &HashMap<String, SourceMessage>) -> bool {
+    evidence
+        .iter()
+        .filter(|e| e.role == "USER" && !e.is_reference)
+        .all(|e| {
+            catalog.get(&e.message_id).is_some_and(|source| {
+                quote_is_question(&source.text, &e.quote)
+                    || quote_is_question(&source.rendered_text, &e.quote)
+            })
+        })
+}
+
+/// True when every sentence the quote touches ends with a question mark.
+/// A quote that stops mid-sentence is read through to that sentence's end.
+fn quote_is_question(text: &str, quote: &str) -> bool {
+    let Some(start) = text.find(quote) else {
+        return false;
+    };
+    let span = &text[start..];
+    let mut chars = span.char_indices().peekable();
+    let (mut has_content, mut saw_question) = (false, false);
+    while let Some((offset, ch)) = chars.next() {
+        let next_is_boundary = chars.peek().is_none_or(|(_, next)| next.is_whitespace());
+        let question = matches!(ch, '?' | '？');
+        let other_end = matches!(ch, '!' | '！' | '。' | '\n') || (ch == '.' && next_is_boundary);
+        if question || other_end {
+            if has_content {
+                if !question {
+                    return false;
+                }
+                saw_question = true;
+            }
+            has_content = false;
+            if offset + ch.len_utf8() >= quote.len() {
+                return saw_question;
+            }
+        } else if ch.is_alphanumeric() {
+            has_content = true;
+        }
+    }
+    // The quote ran into text with no closing punctuation: not a question.
+    saw_question && !has_content
 }
 
 fn correction_order_matches(
@@ -573,6 +621,80 @@ mod tests {
             assert!(result.sessions[0].decisions.is_empty());
             assert!(result.sessions[0].til.is_empty());
         }
+    }
+
+    #[test]
+    fn test_learning_needs_user_speech_that_is_not_only_a_question() {
+        // (user text, quoted part, learning kept?)
+        for (text, quote, kept) in [
+            (
+                "workspace id가 not set인데 어떻게 동작 중인거지?",
+                "어떻게 동작 중인거지?",
+                false,
+            ),
+            // Quoting only the first half of a question is still a question.
+            (
+                "workspace id가 not set인데 어떻게 동작 중인거지?",
+                "workspace id가 not set인데",
+                false,
+            ),
+            (
+                "Why does v0.15.1 work without it？",
+                "Why does v0.15.1 work",
+                false,
+            ),
+            (
+                "아 키 종류가 달라서 그렇구나. 그럼 B는 왜 그래?",
+                "키 종류가 달라서 그렇구나",
+                true,
+            ),
+            (
+                "아 키 종류가 달라서 그렇구나. 그럼 B는 왜 그래?",
+                "아 키 종류가 달라서 그렇구나. 그럼 B는 왜 그래?",
+                true,
+            ),
+            (
+                "키 종류가 달라서 그런 거였네",
+                "키 종류가 달라서 그런 거였네",
+                true,
+            ),
+            (
+                "왜 되지?\n아 키가 워크스페이스 전용이네",
+                "아 키가 워크스페이스 전용이네",
+                true,
+            ),
+        ] {
+            let sources = vec![source("USER", text, 3)];
+            let (_, catalog) = annotate_messages(&[("USER".into(), text.into())], &sources);
+            let mut result = analysis_with(serde_json::json!([{"message_id":"m1","quote":quote}]));
+            validate(&mut result, "s1", &catalog);
+            assert_eq!(
+                result.sessions[0].til.len(),
+                usize::from(kept),
+                "{text} / {quote}"
+            );
+            // A question can still carry a decision, e.g. a rejected proposal.
+            assert_eq!(result.sessions[0].decisions.len(), 1, "{text} / {quote}");
+        }
+    }
+
+    #[test]
+    fn test_learning_survives_when_another_user_quote_is_not_a_question() {
+        let mut question = source("USER", "왜 되는 거지?", 3);
+        let mut confirmed = source("USER", "키 종류가 달라서였구나", 5);
+        question.message_index = 1;
+        confirmed.message_index = 2;
+        let messages = vec![
+            ("USER".into(), question.text.clone()),
+            ("USER".into(), confirmed.text.clone()),
+        ];
+        let (_, catalog) = annotate_messages(&messages, &[question, confirmed]);
+        let mut result = analysis_with(serde_json::json!([
+            {"message_id":"m1","quote":"왜 되는 거지?"},
+            {"message_id":"m2","quote":"키 종류가 달라서였구나"}
+        ]));
+        validate(&mut result, "s1", &catalog);
+        assert_eq!(result.sessions[0].til.len(), 1);
     }
 
     #[test]
