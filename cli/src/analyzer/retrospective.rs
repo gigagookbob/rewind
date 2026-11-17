@@ -117,11 +117,19 @@ impl Project {
             normalized.file_name()?;
             unique.insert(normalized.to_str()?.to_string());
         }
-        if unique.len() != 1 {
+        // A session that moves into subdirectories still belongs to the recorded
+        // parent. Unrelated or sibling-only directories stay unknown.
+        let root = unique
+            .iter()
+            .min_by_key(|directory| Path::new(directory).components().count())?;
+        if !unique
+            .iter()
+            .all(|directory| Path::new(directory).starts_with(root))
+        {
             return None;
         }
         Some(Self {
-            directory: unique.into_iter().next()?,
+            directory: root.clone(),
         })
     }
 
@@ -227,6 +235,21 @@ mod tests {
         let task = crate::analyzer::build_codex_session_task(&[codex, speech], "s1", "codex", &[])
             .unwrap();
         assert_eq!(task.project.as_ref().unwrap().directory, "/other/app");
+    }
+
+    #[test]
+    fn test_project_uses_recorded_parent_when_session_moves_into_subdirectories() {
+        let root = Project::from_directories(["/a/app"]);
+        assert_eq!(
+            Project::from_directories(["/a/app", "/a/app/cli", "/a/app/cli/src", "/a/app"]),
+            root
+        );
+        assert_eq!(Project::from_directories(["/a/app/cli", "/a/app"]), root);
+        // Sibling directories without a recorded common parent stay unknown.
+        assert!(Project::from_directories(["/a/app/cli", "/a/app/website"]).is_none());
+        // A shared name prefix is not a parent directory.
+        assert!(Project::from_directories(["/a/app", "/a/app-old"]).is_none());
+        assert!(Project::from_directories(["/a/app", "/a/app/cli", "/b/other"]).is_none());
     }
 
     #[test]
