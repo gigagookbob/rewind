@@ -307,7 +307,10 @@ pub(super) fn print_insights(sources: &[(&str, &analyzer::AnalysisResult)]) {
                 );
                 for d in &session.decisions {
                     println!("  • {}", d.what);
-                    println!("    {DIM}→ {}{RESET}", d.why);
+                    // The model leaves `why` empty when no reason was stated.
+                    if !d.why.trim().is_empty() {
+                        println!("    {DIM}→ {}{RESET}", d.why.trim());
+                    }
                     print!("{}", crate::output::display_evidence(&d.evidence));
                 }
             }

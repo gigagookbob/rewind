@@ -92,7 +92,11 @@ fn render_session(md: &mut String, session: &SessionInsight) {
             crate::messages::markdown::DECISIONS_HEADER.replacen("###", "####", 1)
         ));
         for d in &session.decisions {
-            md.push_str(&format!("- **{}**: {}\n", d.what, d.why));
+            // The model leaves `why` empty when no reason was stated.
+            match d.why.trim() {
+                "" => md.push_str(&format!("- **{}**\n", d.what)),
+                why => md.push_str(&format!("- **{}**: {}\n", d.what, why)),
+            }
             render_evidence(md, &d.evidence);
         }
         md.push('\n');
@@ -236,6 +240,18 @@ mod tests {
 
         assert!(md.contains("### Key Decisions"));
         assert!(md.contains("- **serde 사용**: 자동 역직렬화가 편리"));
+    }
+
+    #[test]
+    fn test_render_markdown_decision_without_reason_has_no_dangling_colon() {
+        for why in ["", "  \n"] {
+            let mut analysis = make_test_analysis();
+            analysis.sessions[0].decisions[0].why = why.to_string();
+            let md = render_markdown(&analysis, test_date());
+
+            assert!(md.contains("- **serde 사용**\n"), "{md}");
+            assert!(!md.contains("**serde 사용**:"), "{md}");
+        }
     }
 
     #[test]
