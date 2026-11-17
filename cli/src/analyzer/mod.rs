@@ -2,7 +2,6 @@
 
 pub mod anthropic;
 pub(crate) mod anthropic_error;
-pub mod codex_exec;
 pub mod compaction;
 pub mod context;
 pub mod evidence;
@@ -81,11 +80,7 @@ fn stop_spinner(spinner: indicatif::ProgressBar) {
     spinner.finish_and_clear();
 }
 
-fn print_rate_limit_status(
-    provider: &provider::LlmProvider,
-    limits: &planner::RateLimits,
-    probed: bool,
-) {
+fn print_rate_limit_status(limits: &planner::RateLimits, probed: bool) {
     if probed {
         eprintln!(
             "{}",
@@ -95,20 +90,10 @@ fn print_rate_limit_status(
                 limits.requests_per_minute,
             )
         );
-    } else if provider.supports_rate_limit_probe() {
-        eprintln!(
-            "{}",
-            crate::messages::status::rate_limit_fallback(
-                limits.input_tokens_per_minute,
-                limits.output_tokens_per_minute,
-                limits.requests_per_minute,
-            )
-        );
     } else {
         eprintln!(
             "{}",
-            crate::messages::status::rate_limit_probe_skipped(
-                provider.display_name(),
+            crate::messages::status::rate_limit_fallback(
                 limits.input_tokens_per_minute,
                 limits.output_tokens_per_minute,
                 limits.requests_per_minute,
@@ -124,7 +109,7 @@ pub async fn prepare_session_analysis_context() -> Result<SessionAnalysisContext
     let result = provider.probe_rate_limits(&api_key).await;
     stop_spinner(sp);
     let (rate_limits, probed) = result?;
-    print_rate_limit_status(&provider, &rate_limits, probed);
+    print_rate_limit_status(&rate_limits, probed);
 
     Ok(SessionAnalysisContext {
         provider,

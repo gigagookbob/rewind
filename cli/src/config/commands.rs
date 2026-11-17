@@ -5,9 +5,8 @@ use super::auth::{
 };
 use super::vault::{default_output_path, detect_obsidian_vault};
 use super::{
-    ClaudeInputConfig, Config, ConfigError, DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT,
-    InputConfig, Lang, LlmConfig, OutputConfig, config_path, load_config, parse_bool_toggle,
-    parse_codex_model_value, parse_reasoning_effort, save_config,
+    ClaudeInputConfig, Config, ConfigError, InputConfig, Lang, LlmConfig, OutputConfig,
+    config_path, load_config, parse_bool_toggle, save_config,
 };
 use std::path::PathBuf;
 
@@ -26,42 +25,32 @@ pub(crate) fn run_init() -> Result<(), ConfigError> {
         provider
     };
 
-    if !["anthropic", "openai", "codex"].contains(&provider) {
+    if !["anthropic", "openai"].contains(&provider) {
         return Err(crate::messages::init::unsupported_provider(provider).into());
     }
 
-    // API key input (masked). Codex uses `codex login` auth (no API key).
-    let entered_api_key = match provider {
-        "codex" => {
-            eprintln!("{}", crate::messages::init::CODEX_LOGIN_AUTH);
-            String::new()
-        }
-        "anthropic" | "openai" => {
-            let key_prompt = match provider {
-                "anthropic" => crate::messages::init::ENTER_API_KEY_ANTHROPIC,
-                "openai" => crate::messages::init::ENTER_API_KEY_OPENAI,
-                _ => unreachable!(),
-            };
-            let entered = rpassword::prompt_password(key_prompt)
-                .map_err(|e| crate::messages::init::api_key_input_failed(&e))?;
-            entered.trim().to_string()
-        }
-        _ => unreachable!(),
+    // API key input (masked).
+    let key_prompt = if provider == "openai" {
+        crate::messages::init::ENTER_API_KEY_OPENAI
+    } else {
+        crate::messages::init::ENTER_API_KEY_ANTHROPIC
     };
+    let entered_api_key = rpassword::prompt_password(key_prompt)
+        .map_err(|e| crate::messages::init::api_key_input_failed(&e))?
+        .trim()
+        .to_string();
 
-    if provider != "codex" && entered_api_key.is_empty() {
+    if entered_api_key.is_empty() {
         return Err(crate::messages::init::API_KEY_EMPTY.into());
     }
 
-    if provider != "codex" {
-        // Show masked key (first 8 chars + ***)
-        let masked = if entered_api_key.len() > 8 {
-            format!("{}***", &entered_api_key[..8])
-        } else {
-            "***".to_string()
-        };
-        eprintln!("{}", crate::messages::init::api_key_set(&masked));
-    }
+    // Show masked key (first 8 chars + ***)
+    let masked = if entered_api_key.len() > 8 {
+        format!("{}***", &entered_api_key[..8])
+    } else {
+        "***".to_string()
+    };
+    eprintln!("{}", crate::messages::init::api_key_set(&masked));
 
     // Output path — suggest detected vault path as default
     let default_path = detect_obsidian_vault().unwrap_or_else(default_output_path);
@@ -106,8 +95,6 @@ pub(crate) fn run_init() -> Result<(), ConfigError> {
             },
             anthropic_workspace_id: None,
             legacy_api_key: String::new(),
-            codex_model: None,
-            codex_reasoning_effort: None,
         },
         output: OutputConfig {
             path: output_path.to_string_lossy().to_string(),
@@ -142,7 +129,7 @@ pub(crate) fn run_config(key: &str, value: &str) -> Result<(), ConfigError> {
             eprintln!("{}", crate::messages::config::output_path_changed(value));
         }
         "provider" => {
-            if !["anthropic", "openai", "codex"].contains(&value) {
+            if !["anthropic", "openai"].contains(&value) {
                 return Err(crate::messages::config::unsupported_provider(value).into());
             }
             config.llm.provider = value.to_string();
@@ -194,33 +181,6 @@ pub(crate) fn run_config(key: &str, value: &str) -> Result<(), ConfigError> {
                     .anthropic_workspace_id
                     .as_deref()
                     .unwrap_or("not set")
-            );
-        }
-        "codex-model" => {
-            config.llm.codex_model = parse_codex_model_value(value);
-            eprintln!(
-                "{}",
-                crate::messages::config::codex_model_changed(
-                    config
-                        .llm
-                        .codex_model
-                        .as_deref()
-                        .unwrap_or(DEFAULT_CODEX_MODEL),
-                )
-            );
-        }
-        "codex-reasoning" => {
-            let normalized = parse_reasoning_effort(value)?;
-            config.llm.codex_reasoning_effort = normalized;
-            eprintln!(
-                "{}",
-                crate::messages::config::codex_reasoning_changed(
-                    config
-                        .llm
-                        .codex_reasoning_effort
-                        .as_deref()
-                        .unwrap_or(DEFAULT_CODEX_REASONING_EFFORT),
-                )
             );
         }
         "lang" => {

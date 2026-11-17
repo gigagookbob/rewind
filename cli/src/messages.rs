@@ -11,11 +11,9 @@
 
 /// Messages for `rwd init` flow.
 pub mod init {
-    pub const SELECT_PROVIDER: &str = "Select LLM provider (anthropic/openai/codex) [anthropic]: ";
+    pub const SELECT_PROVIDER: &str = "Select LLM provider (anthropic/openai) [anthropic]: ";
     pub const ENTER_API_KEY_ANTHROPIC: &str = "Enter Anthropic API key: ";
     pub const ENTER_API_KEY_OPENAI: &str = "Enter OpenAI API key: ";
-    pub const CODEX_LOGIN_AUTH: &str =
-        "Codex provider uses `codex login` session authentication (API key is not used).";
     pub const API_KEY_EMPTY: &str = "API key is empty.";
 
     pub fn api_key_input_failed(e: &dyn std::fmt::Display) -> String {
@@ -35,7 +33,7 @@ pub mod init {
     }
 
     pub fn unsupported_provider(name: &str) -> String {
-        format!("Unsupported provider: {name}. Available: anthropic, openai, codex")
+        format!("Unsupported provider: {name}. Available: anthropic, openai")
     }
 
     pub fn config_saved(path: &dyn std::fmt::Display) -> String {
@@ -55,7 +53,7 @@ pub mod config {
     pub const NAV_HINT: &str =
         "  \u{2191}\u{2193} Navigate \u{00B7} Enter Select \u{00B7} Esc Exit";
     pub const NO_CHANGE: &str = "  No change";
-    pub const USAGE: &str = "Usage: `rwd config` (interactive) or `rwd config <key> <value>` (keys: output-path, provider, api-key, openai-api-key, anthropic-api-key, anthropic-workspace-id, codex-model, codex-reasoning, claude-include-automated)";
+    pub const USAGE: &str = "Usage: `rwd config` (interactive) or `rwd config <key> <value>` (keys: output-path, provider, api-key, openai-api-key, anthropic-api-key, anthropic-workspace-id, claude-include-automated)";
 
     pub fn config_saved(path: &dyn std::fmt::Display) -> String {
         format!("Config saved. {path}")
@@ -90,21 +88,13 @@ pub mod config {
     }
 
     pub fn unsupported_provider(name: &str) -> String {
-        format!("Unsupported provider: '{name}'. Available: anthropic, openai, codex")
+        format!("Unsupported provider: '{name}'. Available: anthropic, openai")
     }
 
     pub fn unknown_key(key: &str) -> String {
         format!(
-            "Unknown config key: '{key}'. Available: output-path, provider, api-key, openai-api-key, anthropic-api-key, anthropic-workspace-id, codex-model, codex-reasoning, claude-include-automated"
+            "Unknown config key: '{key}'. Available: output-path, provider, api-key, openai-api-key, anthropic-api-key, anthropic-workspace-id, claude-include-automated"
         )
-    }
-
-    pub fn codex_model_changed(value: &str) -> String {
-        format!("Codex model changed: {value}")
-    }
-
-    pub fn codex_reasoning_changed(value: &str) -> String {
-        format!("Codex reasoning effort changed: {value}")
     }
 
     pub fn claude_include_automated_changed(enabled: bool) -> String {
@@ -119,12 +109,6 @@ pub mod config {
         format!("  Provider `{provider}` now uses: {auth_method}")
     }
 
-    pub fn switched_to_codex_keeps_api_key(api_key_state: &str) -> String {
-        format!(
-            "  Switched to Codex login auth. Stored API key is kept ({api_key_state}) and unused."
-        )
-    }
-
     pub fn provider_requires_api_key(provider: &str) -> String {
         format!(
             "  `{provider}` uses API key auth. Provider key is not set — set one with `rwd config api-key <key>`."
@@ -134,12 +118,6 @@ pub mod config {
     pub fn api_key_unused_for_provider(provider: &str) -> String {
         format!(
             "Current provider `{provider}` does not use API key auth. Use `rwd config provider openai|anthropic` first, or set `openai-api-key` / `anthropic-api-key` directly."
-        )
-    }
-
-    pub fn unsupported_reasoning_effort(value: &str) -> String {
-        format!(
-            "Unsupported codex reasoning effort: '{value}'. Available: low, medium, high, xhigh, default"
         )
     }
 
@@ -176,10 +154,6 @@ pub mod auth {
 
     pub fn provider_api_key(provider: &str, state: &str, detail: &str) -> String {
         format!("{provider} API key: {state} ({detail})")
-    }
-
-    pub fn codex_login_status(state: &str) -> String {
-        format!("Codex login: {state}")
     }
 
     pub fn provider_missing_api_key(provider: &str, hint: &str) -> String {
@@ -230,8 +204,10 @@ pub mod error {
         format!("Unsupported platform: {os}-{arch}")
     }
 
+    pub const CODEX_PROVIDER_REMOVED: &str = "The `codex` provider was removed. Run `rwd config provider anthropic` or `rwd config provider openai`, then set its API key.";
+
     pub fn unsupported_provider_in_config() -> String {
-        "Unsupported provider in config. Available: anthropic, openai, codex".to_string()
+        "Unsupported provider in config. Available: anthropic, openai".to_string()
     }
 
     pub fn api_request_failed(status: &dyn std::fmt::Display, body: &str) -> String {
@@ -395,13 +371,6 @@ pub mod status {
              (ITPM: {itpm} | OTPM: {otpm} | RPM: {rpm})"
         )
     }
-
-    pub fn rate_limit_probe_skipped(provider: &str, itpm: u64, otpm: u64, rpm: u64) -> String {
-        format!(
-            "\u{2139} Rate limit check is not supported for {provider}; using defaults. \
-             (ITPM: {itpm} | OTPM: {otpm} | RPM: {rpm})"
-        )
-    }
 }
 
 /// Labels for `rwd today --verbose` output sections.
@@ -484,14 +453,9 @@ pub mod markdown {
 pub mod verify {
     pub const VERIFYING_KEY: &str = "  Verifying API key...";
     pub const KEY_VERIFIED: &str = "  \u{2713} API key verified";
-    pub const VERIFYING_CODEX_LOGIN: &str = "  Verifying Codex login...";
-    pub const CODEX_LOGIN_VERIFIED: &str = "  \u{2713} Codex login verified";
     pub const VERIFY_SKIPPED_CLIENT: &str =
         "  API key verification skipped (HTTP client creation failed)";
     pub const VERIFY_SKIPPED_NETWORK: &str = "  API key verification skipped (network error)";
-    pub const CODEX_LOGIN_CHECK_FAILED: &str =
-        "  Codex login check failed (command execution error)";
-    pub const CODEX_NOT_LOGGED_IN: &str = "  \u{26A0} Codex login not found. Run `codex login`.";
 
     pub fn verification_failed(status: u16) -> String {
         if status == 401 {

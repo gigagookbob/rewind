@@ -2,12 +2,8 @@
 
 use super::{ConfigError, LlmConfig, config_path, load_config, resolve_env_placeholders};
 
-pub(super) fn provider_auth_method(provider: &str) -> &'static str {
-    match provider {
-        "codex" => "Codex login session",
-        "anthropic" | "openai" => "API key",
-        _ => "API key",
-    }
+pub(super) fn provider_auth_method(_provider: &str) -> &'static str {
+    "API key"
 }
 
 pub(super) fn provider_uses_api_key(provider: &str) -> bool {
@@ -27,71 +23,13 @@ pub(super) fn print_provider_switch_guidance(
         return;
     }
 
-    if new_provider == "codex" {
-        let openai_state = if has_stored_api_key(&llm.openai_api_key) {
-            "set"
-        } else {
-            "not set"
-        };
-        let anthropic_state = if has_stored_api_key(&llm.anthropic_api_key) {
-            "set"
-        } else {
-            "not set"
-        };
-        eprintln!(
-            "{}",
-            crate::messages::config::switched_to_codex_keeps_api_key(&format!(
-                "openai: {openai_state}, anthropic: {anthropic_state}"
-            ))
-        );
-    } else if provider_uses_api_key(new_provider)
+    if provider_uses_api_key(new_provider)
         && !has_stored_api_key(llm.api_key_for_provider(new_provider))
     {
         eprintln!(
             "{}",
             crate::messages::config::provider_requires_api_key(new_provider)
         );
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CodexLoginState {
-    Verified,
-    NotLoggedIn,
-    CheckFailed,
-}
-
-fn infer_codex_login_state(success: bool, stdout: &str, stderr: &str) -> CodexLoginState {
-    if !success {
-        return CodexLoginState::NotLoggedIn;
-    }
-
-    // Some Codex builds print login status to stderr instead of stdout.
-    let merged = format!("{stdout}\n{stderr}").to_ascii_lowercase();
-    if merged.contains("not logged in") || merged.contains("not authenticated") {
-        CodexLoginState::NotLoggedIn
-    } else if merged.contains("logged in") {
-        CodexLoginState::Verified
-    } else {
-        CodexLoginState::NotLoggedIn
-    }
-}
-
-async fn codex_login_state() -> CodexLoginState {
-    let status_output = tokio::task::spawn_blocking(|| {
-        std::process::Command::new("codex")
-            .args(["login", "status"])
-            .output()
-    })
-    .await;
-
-    match status_output {
-        Ok(Ok(output)) => infer_codex_login_state(
-            output.status.success(),
-            &String::from_utf8_lossy(&output.stdout),
-            &String::from_utf8_lossy(&output.stderr),
-        ),
-        _ => CodexLoginState::CheckFailed,
     }
 }
 
@@ -151,12 +89,7 @@ pub(crate) async fn run_auth_status() -> Result<(), ConfigError> {
     );
 
     if provider == "codex" {
-        let state = match codex_login_state().await {
-            CodexLoginState::Verified => "verified",
-            CodexLoginState::NotLoggedIn => "not logged in",
-            CodexLoginState::CheckFailed => "check failed",
-        };
-        println!("{}", crate::messages::auth::codex_login_status(state));
+        println!("{}", crate::messages::error::CODEX_PROVIDER_REMOVED);
     } else {
         let has_active_key = has_stored_api_key(config.llm.api_key_for_provider(provider));
         if !has_active_key {
@@ -177,7 +110,6 @@ pub(crate) async fn run_auth_status() -> Result<(), ConfigError> {
 
 /// Verifies provider credentials.
 /// - anthropic/openai: lightweight models endpoint call
-/// - codex: `codex login status` command check
 pub(super) async fn verify_api_key(provider: &str, api_key: &str, workspace_id: Option<&str>) {
     let dim = "\x1b[2m";
     let green = "\x1b[32m";
@@ -194,34 +126,6 @@ pub(super) async fn verify_api_key(provider: &str, api_key: &str, workspace_id: 
         }
     };
     let api_key = resolved.as_str();
-
-    if provider == "codex" {
-        eprint!(
-            "{dim}{}{reset}",
-            crate::messages::verify::VERIFYING_CODEX_LOGIN
-        );
-        match codex_login_state().await {
-            CodexLoginState::Verified => {
-                eprintln!(
-                    "\r{green}{}{reset}                    ",
-                    crate::messages::verify::CODEX_LOGIN_VERIFIED
-                );
-            }
-            CodexLoginState::NotLoggedIn => {
-                eprintln!(
-                    "\r{yellow}{}{reset}",
-                    crate::messages::verify::CODEX_NOT_LOGGED_IN
-                );
-            }
-            CodexLoginState::CheckFailed => {
-                eprintln!(
-                    "\r{dim}{}{reset}",
-                    crate::messages::verify::CODEX_LOGIN_CHECK_FAILED
-                );
-            }
-        }
-        return;
-    }
 
     eprint!("{dim}{}{reset}", crate::messages::verify::VERIFYING_KEY);
 
@@ -341,7 +245,6 @@ mod tests {
 
     #[test]
     fn test_provider_auth_method_and_usage_flags() {
-        assert_eq!(provider_auth_method("codex"), "Codex login session");
         assert_eq!(provider_auth_method("openai"), "API key");
         assert_eq!(provider_auth_method("anthropic"), "API key");
         assert!(provider_uses_api_key("openai"));
@@ -354,21 +257,5 @@ mod tests {
         assert!(has_stored_api_key("sk-test-key"));
         assert!(!has_stored_api_key(""));
         assert!(!has_stored_api_key("   "));
-    }
-
-    #[test]
-    fn test_infer_codex_login_state_reads_stderr_logged_in() {
-        assert_eq!(
-            infer_codex_login_state(true, "", "Logged in using ChatGPT"),
-            CodexLoginState::Verified
-        );
-    }
-
-    #[test]
-    fn test_infer_codex_login_state_not_logged_in_phrase_wins() {
-        assert_eq!(
-            infer_codex_login_state(true, "Logged in", "Not logged in"),
-            CodexLoginState::NotLoggedIn
-        );
     }
 }

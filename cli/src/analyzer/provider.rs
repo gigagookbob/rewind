@@ -1,4 +1,4 @@
-// LLM provider abstraction. Supports Anthropic, OpenAI, and Codex CLI.
+// LLM provider abstraction. Supports Anthropic and OpenAI.
 // Prompts are loaded from prompts/*.md at compile time via include_str!().
 
 use crate::config::Lang;
@@ -9,10 +9,6 @@ const SUMMARY_PROMPT_EN: &str = include_str!("../../prompts/summary_en.md");
 const SUMMARY_PROMPT_KO: &str = include_str!("../../prompts/summary_ko.md");
 const SLACK_PROMPT_EN: &str = include_str!("../../prompts/slack_en.md");
 const SLACK_PROMPT_KO: &str = include_str!("../../prompts/slack_ko.md");
-const CODEX_PROMPT_PREFIX: &str = "[System Instructions]\n";
-const CODEX_PROMPT_MIDDLE: &str = "\n\n[Conversation]\n";
-const CODEX_MAX_INPUT_CHARS: usize = 1_048_576;
-const CODEX_INPUT_SAFETY_MARGIN_CHARS: usize = 8_192;
 
 fn get_system_prompt(lang: &Lang) -> &'static str {
     match lang {
@@ -35,23 +31,11 @@ fn get_slack_prompt(lang: &Lang) -> &'static str {
     }
 }
 
-fn codex_max_conversation_chars(system_prompt: &str) -> usize {
-    let overhead = CODEX_PROMPT_PREFIX.chars().count()
-        + CODEX_PROMPT_MIDDLE.chars().count()
-        + system_prompt.chars().count()
-        + CODEX_INPUT_SAFETY_MARGIN_CHARS;
-    CODEX_MAX_INPUT_CHARS.saturating_sub(overhead)
-}
-
 /// LLM provider enum. Adding a new variant triggers compile errors at unhandled match arms.
 #[derive(Clone)]
 pub enum ProviderKind {
     Anthropic,
     OpenAi,
-    Codex {
-        model: String,
-        reasoning_effort: String,
-    },
 }
 
 pub struct LlmProvider {
@@ -62,17 +46,10 @@ pub struct LlmProvider {
     pub(super) recording: Option<super::transport_tests::Recording>,
 }
 
-/// The exact object handed to HTTP execution or the Codex stdin writer.
+/// The exact object handed to HTTP execution.
 pub(super) enum OutboundRequest {
     Anthropic(reqwest::Request),
     OpenAi(reqwest::Request),
-    Codex {
-        stdin: String,
-        max_tokens: u32,
-        model: String,
-        reasoning_effort: String,
-        json_output: bool,
-    },
 }
 
 impl LlmProvider {
@@ -94,20 +71,10 @@ impl LlmProvider {
         match &self.kind {
             ProviderKind::Anthropic => 32_000,
             ProviderKind::OpenAi => 16_384,
-            ProviderKind::Codex { .. } => 16_384,
-        }
-    }
-
-    /// Returns a safe max length for conversation text for an arbitrary system prompt.
-    pub fn max_conversation_chars_with_prompt(&self, system_prompt: &str) -> Option<usize> {
-        match &self.kind {
-            ProviderKind::Codex { .. } => Some(codex_max_conversation_chars(system_prompt)),
-            _ => None,
         }
     }
 
     /// Calls the insight-extraction API with the system prompt selected by language.
-    /// Codex enforces the structured JSON output schema on this path.
     pub async fn call_analysis_api(
         &self,
         api_key: &str,
@@ -215,16 +182,6 @@ impl LlmProvider {
                 max_tokens,
                 json_output,
             )?),
-            ProviderKind::Codex {
-                model,
-                reasoning_effort,
-            } => OutboundRequest::Codex {
-                stdin: super::codex_exec::compose_prompt(&system, &text),
-                max_tokens,
-                model: model.clone(),
-                reasoning_effort: reasoning_effort.clone(),
-                json_output,
-            },
         };
         #[cfg(test)]
         if let Some(recording) = &self.recording {
@@ -233,22 +190,6 @@ impl LlmProvider {
         match request {
             OutboundRequest::Anthropic(request) => super::anthropic::send_request(request).await,
             OutboundRequest::OpenAi(request) => super::openai::send_request(request).await,
-            OutboundRequest::Codex {
-                stdin,
-                max_tokens,
-                model,
-                reasoning_effort,
-                json_output,
-            } => {
-                super::codex_exec::call_codex_api(
-                    &stdin,
-                    max_tokens,
-                    &model,
-                    &reasoning_effort,
-                    json_output,
-                )
-                .await
-            }
         }
     }
 
@@ -259,13 +200,7 @@ impl LlmProvider {
         text: &str,
         budget: u64,
     ) -> Result<(), super::AnalyzerError> {
-        let codex_too_long = matches!(self.kind, ProviderKind::Codex { .. })
-            && super::codex_exec::compose_prompt(system, text)
-                .chars()
-                .count()
-                .saturating_add(CODEX_INPUT_SAFETY_MARGIN_CHARS)
-                > CODEX_MAX_INPUT_CHARS;
-        if codex_too_long || self.estimate_input_tokens(system, text) > budget {
+        if self.estimate_input_tokens(system, text) > budget {
             return Err(
                 "AI input exceeds the input budget; no conversation text was truncated".into(),
             );
@@ -274,11 +209,7 @@ impl LlmProvider {
     }
 
     pub(super) fn estimate_input_tokens(&self, system: &str, text: &str) -> u64 {
-        let input = match self.kind {
-            ProviderKind::Codex { .. } => super::codex_exec::compose_prompt(system, text),
-            _ => format!("{system}\n{text}"),
-        };
-        super::prompt::estimate_tokens(&input)
+        super::prompt::estimate_tokens(&format!("{system}\n{text}"))
     }
 
     pub(super) fn check_analysis_input(
@@ -295,7 +226,6 @@ impl LlmProvider {
         match &self.kind {
             ProviderKind::Anthropic => "Claude",
             ProviderKind::OpenAi => "OpenAI",
-            ProviderKind::Codex { .. } => "Codex",
         }
     }
 
@@ -314,17 +244,11 @@ impl LlmProvider {
                 .await?
             }
             ProviderKind::OpenAi => super::openai::probe_openai_rate_limits(api_key).await,
-            ProviderKind::Codex { .. } => None,
         };
         Ok(match result {
             Some(limits) => (limits, true),
             None => (super::planner::RateLimits::default_generous(), false),
         })
-    }
-
-    /// Returns true if this provider supports rate-limit probing.
-    pub fn supports_rate_limit_probe(&self) -> bool {
-        !matches!(self.kind, ProviderKind::Codex { .. })
     }
 }
 
@@ -351,25 +275,7 @@ pub(super) fn load_provider_from_path(
     let (provider, api_key) = match config.llm.provider.as_str() {
         "openai" => (ProviderKind::OpenAi, resolve(&config.llm.openai_api_key)?),
         "codex" => {
-            let model = config
-                .llm
-                .codex_model
-                .as_deref()
-                .unwrap_or(crate::config::DEFAULT_CODEX_MODEL)
-                .to_string();
-            let reasoning_effort = config
-                .llm
-                .codex_reasoning_effort
-                .as_deref()
-                .unwrap_or(crate::config::DEFAULT_CODEX_REASONING_EFFORT)
-                .to_string();
-            (
-                ProviderKind::Codex {
-                    model,
-                    reasoning_effort,
-                },
-                String::new(),
-            )
+            return Err(crate::messages::error::CODEX_PROVIDER_REMOVED.into());
         }
         "anthropic" => (
             ProviderKind::Anthropic,
