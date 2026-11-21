@@ -75,7 +75,7 @@ pub enum ToolUseResult {
 
 /// The `toolUseResult` fields a subagent run records. Verified: all 24
 /// parent-side subagent results carry `agentId` and `prompt`; the 18 sync
-/// runs also carry `agentType` and `content` text blocks (SPEC.md, stage 4).
+/// runs also carry `agentType` and `content` text blocks.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolUseResultFields {

@@ -147,13 +147,13 @@ fn optional_non_empty_string(value: &serde_json::Value) -> Option<String> {
 
 /// `response_item` payload type for inter-agent messages. Verified: all 50
 /// forked subagent rollouts receive their task as the first `agent_message`
-/// whose `recipient` is their own `agent_path` (SPEC.md, stage 4).
+/// whose `recipient` is their own `agent_path`.
 const PAYLOAD_AGENT_MESSAGE: &str = "agent_message";
 
 /// `session_meta` fields sent as the `[META]` line: where the session ran.
 /// Verified on 141 local `session_meta` lines: the rest is Codex's own
 /// `base_instructions` (~21,500 chars each), account and window ids,
-/// versions, and timestamps (SPEC.md, Codex prompt text).
+/// versions, and timestamps.
 const SESSION_META_PROMPT_FIELDS: [&str; 6] = [
     "/cwd",
     "/git/branch",
@@ -267,7 +267,7 @@ impl CodexEntry {
                 }
             }
             // Other payload strings (`images` data URLs, local file paths,
-            // `kind`) are not what the user typed (SPEC.md, Codex prompt text).
+            // `kind`) are not what the user typed.
             "event_msg" if payload["type"].as_str() == Some("user_message") => {
                 CodexEntry::UserMessage {
                     source_location: None,
@@ -303,8 +303,7 @@ impl CodexEntry {
                     && payload["role"].as_str() == Some("assistant") =>
             {
                 // Verified: besides `output_text`, all 1,867 local answers
-                // carry only ids, `phase`, `status`, and type names
-                // (SPEC.md, Codex prompt text).
+                // carry only ids, `phase`, `status`, and type names.
                 CodexEntry::AssistantMessage {
                     source_location: None,
                     timestamp: ts,

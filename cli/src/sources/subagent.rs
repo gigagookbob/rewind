@@ -1,5 +1,4 @@
-//! Subagent task and result lines for the parent session prompt (SPEC.md,
-//! stage 4).
+//! Subagent task and result lines for the parent session prompt.
 //!
 //! Subagents never count as sessions. Instead the parent prompt gets a
 //! `[SUBAGENT]` line (who was asked to do what) and a `[SUBAGENT_RESULT]` line
@@ -11,16 +10,16 @@ use crate::analyzer::compaction::compact_log_like;
 use crate::analyzer::prompt::TimedLine;
 
 /// Per-result cap chosen from 72 measured subagent results: 6 of them go
-/// over it (SPEC.md, stage 4 length caps).
+/// over it.
 pub const SUBAGENT_RESULT_MAX_CHARS: usize = 8_000;
 /// Results budget per parent session, about 12,000 estimated tokens. Chosen
-/// because one measured session called 26 subagents (SPEC.md, stage 4).
+/// because one measured session called 26 subagents.
 pub const SUBAGENT_SESSION_MAX_CHARS: usize = 24_000;
 /// Per-task cap. Measured: Claude workflow tasks reach 99,073 chars and 23 of
-/// 63 tasks go over 2,000 (SPEC.md, stage 4 length caps).
+/// 63 tasks go over 2,000.
 pub const SUBAGENT_TASK_MAX_CHARS: usize = 2_000;
 /// Tasks budget per parent session. Measured: one parent's tasks summed to
-/// 168,530 chars (SPEC.md, stage 4 length caps).
+/// 168,530 chars.
 pub const SUBAGENT_TASK_SESSION_MAX_CHARS: usize = 6_000;
 
 /// Prompt role for "<name>: <task>".
@@ -123,7 +122,7 @@ fn cap_to_budget(texts: Vec<String>, per_item: usize, session_total: usize) -> V
 /// Shortens ordinary `text` to at most `max_chars` chars (marker included), keeping the
 /// first two thirds and the last third. Reports often end with the
 /// conclusion, so the tail is kept; the 2:1 split is a judgment call, not
-/// measured (SPEC.md, stage 4 length caps).
+/// measured.
 pub fn truncate_middle(text: &str, max_chars: usize) -> String {
     let total = text.chars().count();
     // Defer lossy caps when they would tear a recognizable value in half.
