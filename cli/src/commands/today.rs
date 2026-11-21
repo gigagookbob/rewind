@@ -65,6 +65,7 @@ pub(crate) async fn run_today(
             let cached_sources = prepare_cached_sources(&cached, &run, redactor_enabled);
             // Caches written before the day summary existed get one now.
             let day_summary = match cached.day_summary.clone() {
+                _ if !wants_day_summary(&cached_sources) => None,
                 Some(summary) => Some(summary),
                 None => {
                     let summary = write_day_summary(&cached_sources, &lang).await;
@@ -188,13 +189,24 @@ pub(crate) async fn run_today(
     Ok(())
 }
 
+/// With fewer sessions the digest only repeats the session summaries below it.
+const MIN_SESSIONS_FOR_DAY_SUMMARY: usize = 4;
+
+fn wants_day_summary(sources: &[(String, analyzer::AnalysisResult)]) -> bool {
+    let sessions: usize = sources.iter().map(|(_, a)| a.sessions.len()).sum();
+    sessions >= MIN_SESSIONS_FOR_DAY_SUMMARY
+}
+
 /// Asks the LLM for the digest placed on top of the note. The note is still
 /// saved without it when the call fails, so a failure is only reported.
 async fn write_day_summary(
     sources: &[(String, analyzer::AnalysisResult)],
     lang: &config::Lang,
 ) -> Option<String> {
-    let input = super::summary::collect_work_summaries(sources);
+    if !wants_day_summary(sources) {
+        return None;
+    }
+    let input = super::summary::collect_work_summaries(sources, true);
     if input.is_empty() {
         return None;
     }
@@ -475,6 +487,29 @@ mod tests {
         let md = output::render_combined_markdown(&[("Claude Code", &prepared[0].1)], date);
         assert!(md.contains("근거 미확인"));
         assert!(!md.contains(&format!("{}:1", path.display())));
+    }
+
+    #[test]
+    fn test_day_summary_is_skipped_when_few_sessions_would_only_repeat() {
+        let analysis = |count: usize| {
+            let sessions: Vec<_> = (0..count)
+                .map(|i| serde_json::json!({"session_id":format!("s{i}"),"work_summary":"work","decisions":[],"curiosities":[],"corrections":[]}))
+                .collect();
+            serde_json::from_value::<analyzer::AnalysisResult>(
+                serde_json::json!({"sessions":sessions}),
+            )
+            .unwrap()
+        };
+        let few = vec![
+            ("Claude Code".to_string(), analysis(2)),
+            ("Codex".to_string(), analysis(1)),
+        ];
+        assert!(!wants_day_summary(&few));
+        let enough = vec![
+            ("Claude Code".to_string(), analysis(2)),
+            ("Codex".to_string(), analysis(2)),
+        ];
+        assert!(wants_day_summary(&enough));
     }
 
     #[test]

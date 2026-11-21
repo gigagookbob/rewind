@@ -295,8 +295,13 @@ pub(super) fn print_insights(
     };
     if let Some(summary) = day_summary.map(str::trim).filter(|s| !s.is_empty()) {
         println!("\n{CYAN}  {}{RESET}", text::DAY_SUMMARY_LABEL);
+        // The summary is Markdown for the note; headings read better bare here.
         for line in summary.lines() {
-            println!("  {}", plain(line));
+            match line.strip_prefix("### ") {
+                Some(project) => println!("\n  {BRIGHT_BLUE}{}{RESET}", plain(project)),
+                None if line.trim().is_empty() => {}
+                None => println!("  {}", plain(line)),
+            }
         }
     }
     for (project, sessions) in crate::output::project_groups(sources) {
