@@ -39,19 +39,6 @@ pub fn save_to_vault(
     vault::save(vault_path, date, managed::Section::Analysis, content)
 }
 
-/// Uses the same transaction as analysis, without claiming a user's heading.
-pub fn save_summary_to_vault(
-    vault_path: &Path,
-    date: NaiveDate,
-    summary: &str,
-) -> Result<PathBuf, OutputError> {
-    let body = format!(
-        "{}\n\n{summary}\n",
-        crate::messages::markdown::PROGRESS_SECTION_HEADER
-    );
-    vault::save(vault_path, date, managed::Section::Summary, &body)
-}
-
 /// Full directory keys keep equal leaf names separate. Unknown remains explicit.
 pub(crate) fn project_groups<'a>(
     sources: &[(&'a str, &'a crate::analyzer::AnalysisResult)],
@@ -233,8 +220,14 @@ mod tests {
         assert!(!saved.contains("New analysis"));
     }
 
+    /// Writes the region the removed `rwd summary` command left in older notes.
+    fn save_legacy_summary(dir: &Path, date: NaiveDate, summary: &str) {
+        let body = format!("## Development Progress\n\n{summary}\n");
+        vault::save(dir, date, managed::Section::LegacySummary, &body).unwrap();
+    }
+
     #[test]
-    fn test_analysis_summary_order_and_cached_resave_preserve_user_content() {
+    fn test_legacy_summary_region_and_user_content_survive_analysis_saves() {
         let date = NaiveDate::from_ymd_opt(2099, 1, 2).unwrap();
         let analysis = crate::analyzer::AnalysisResult { sessions: vec![] };
         let markdown = render_combined_markdown(&[("Synthetic", &analysis)], date);
@@ -246,10 +239,12 @@ mod tests {
             let note = "---\ntitle: Mine\n---\n# My title\n\n## Development Progress\nHuman summary\n\n```md\n## Development Progress\nExample\n```\n";
             std::fs::write(&path, note).unwrap();
             if summary_first {
-                save_summary_to_vault(&dir, date, "first progress").unwrap();
+                save_legacy_summary(&dir, date, "latest progress");
             }
             save_to_vault(&dir, date, &markdown).unwrap();
-            save_summary_to_vault(&dir, date, "latest progress").unwrap();
+            if !summary_first {
+                save_legacy_summary(&dir, date, "latest progress");
+            }
             let with_memo = format!(
                 "{}\n## My memo\nKeep this\n",
                 std::fs::read_to_string(&path).unwrap()
@@ -259,20 +254,17 @@ mod tests {
             save_to_vault(&dir, date, &markdown).unwrap();
             assert_eq!(std::fs::read_to_string(&path).unwrap(), with_memo);
             save_to_vault(&dir, date, "refreshed analysis").unwrap();
-            save_summary_to_vault(&dir, date, "latest progress").unwrap();
             let saved = std::fs::read_to_string(&path).unwrap();
             assert!(saved.starts_with(note));
             assert!(saved.ends_with("\n## My memo\nKeep this\n"));
             assert_eq!(saved.matches("latest progress").count(), 1);
             assert_eq!(saved.matches("refreshed analysis").count(), 1);
-            assert!(!saved.contains("first progress"));
             assert_eq!(saved.matches("<!-- rwd:analysis:v1:").count(), 1);
             assert_eq!(saved.matches("<!-- rwd:summary:v1:").count(), 1);
-            // Editing either managed region must stop both writers without mutation.
+            // Editing either managed region must stop the writer without mutation.
             for text in ["latest progress", "refreshed analysis"] {
                 let manual = saved.replace(text, "human addition");
                 std::fs::write(&path, &manual).unwrap();
-                assert!(save_summary_to_vault(&dir, date, "new").is_err());
                 assert!(save_to_vault(&dir, date, "new").is_err());
                 assert_eq!(std::fs::read_to_string(&path).unwrap(), manual);
             }

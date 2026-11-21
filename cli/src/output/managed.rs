@@ -6,14 +6,16 @@ use std::ops::Range;
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Section {
     Analysis,
-    Summary,
+    /// Left in older notes by the removed `rwd summary` command. Nothing writes
+    /// it now, but it must stay recognized so those notes still accept analysis.
+    LegacySummary,
 }
 
 impl Section {
     fn name(self) -> &'static str {
         match self {
             Self::Analysis => "analysis",
-            Self::Summary => "summary",
+            Self::LegacySummary => "summary",
         }
     }
 }
@@ -104,7 +106,7 @@ fn regions(text: &str) -> Result<Vec<(Section, Range<usize>)>, OutputError> {
             continue;
         }
         let mut recognized = false;
-        for section in [Section::Analysis, Section::Summary] {
+        for section in [Section::Analysis, Section::LegacySummary] {
             let prefix = format!("<!-- rwd:{}:v1:", section.name());
             if let Some(hash) = line
                 .strip_prefix(&prefix)
@@ -148,9 +150,9 @@ mod tests {
     #[test]
     fn test_update_preserves_notes_and_independent_regions() {
         let note = "---\ntitle: 오늘\n---\n# 수동 제목\n\n## Development Progress\n기존 진행\n";
-        for first in [Section::Analysis, Section::Summary] {
+        for first in [Section::Analysis, Section::LegacySummary] {
             let second = if first == Section::Analysis {
-                Section::Summary
+                Section::LegacySummary
             } else {
                 Section::Analysis
             };
@@ -167,7 +169,7 @@ mod tests {
     #[test]
     fn test_modified_or_ambiguous_regions_are_not_overwritten() {
         let block = update("", Section::Analysis, "generated").unwrap();
-        let summary = update("", Section::Summary, "progress").unwrap();
+        let summary = update("", Section::LegacySummary, "progress").unwrap();
         let cases = [
             block.replace("generated\n", "generated\nmanual memo\n"),
             block.replace("v1:", "v2:"),
@@ -190,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_fenced_titles_and_markers_are_examples() {
-        let example = update("", Section::Summary, "example").unwrap();
+        let example = update("", Section::LegacySummary, "example").unwrap();
         for (open, close) in [
             ("```markdown", "```"),
             ("~~~~", "~~~~"),
@@ -204,12 +206,15 @@ mod tests {
             } else {
                 note
             };
-            let once = update(&note, Section::Summary, "real").unwrap();
-            let twice = update(&once, Section::Summary, "updated").unwrap();
+            let once = update(&note, Section::LegacySummary, "real").unwrap();
+            let twice = update(&once, Section::LegacySummary, "updated").unwrap();
             assert!(twice.starts_with(&note));
             assert!(twice.contains("example\n"));
             assert!(!twice.contains("real\n"));
-            assert_eq!(update(&twice, Section::Summary, "updated").unwrap(), twice);
+            assert_eq!(
+                update(&twice, Section::LegacySummary, "updated").unwrap(),
+                twice
+            );
         }
     }
 

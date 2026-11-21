@@ -20,8 +20,8 @@ use clap::Parser;
 use cli::{AuthAction, Commands};
 
 use commands::{
-    parse_date_flag, run_slack, run_summary, run_today, run_today_dry_run, run_worker,
-    send_notification, spawn_worker, worker_log_path,
+    parse_date_flag, run_slack, run_today, run_today_dry_run, run_worker, send_notification,
+    spawn_worker, worker_log_path,
 };
 
 #[tokio::main]
@@ -134,23 +134,6 @@ async fn main() {
                 }
             }
         },
-        Commands::Summary {
-            lang,
-            date,
-            no_cache,
-        } => {
-            let target_date = match parse_date_flag(&date) {
-                Ok(d) => d,
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    std::process::exit(1);
-                }
-            };
-            if let Err(e) = run_summary(lang, target_date, no_cache).await {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
-            }
-        }
         Commands::Slack {
             lang,
             date,

@@ -75,14 +75,10 @@ async fn test_anthropic_workspace_config_reaches_every_analysis_request() {
         )).unwrap();
         let (mut provider, key) = super::provider::load_provider_from_path(&path).unwrap();
         let recording = Recording::default();
-        recording.0.lock().unwrap().responses = vec![Ok("ok".into()); 4].into();
+        recording.0.lock().unwrap().responses = vec![Ok("ok".into()); 3].into();
         provider.recording = Some(recording.clone());
         provider
             .call_analysis_api(&key, "hello", 1, &Lang::En, 100_000)
-            .await
-            .unwrap();
-        provider
-            .call_summary_api(&key, "hello", &Lang::En)
             .await
             .unwrap();
         provider
@@ -222,9 +218,9 @@ async fn test_all_provider_payloads_mask_cache_summaries_and_keep_authentication
     let secret = format!("sk-proj-{}", "a".repeat(40));
     for kind in kinds() {
         let (provider, recorded) =
-            fake_provider(kind, true, vec![Ok("summary".into()), Ok("slack".into())]);
+            fake_provider(kind, true, vec![Ok("day".into()), Ok("slack".into())]);
         provider
-            .call_summary_api(&secret, &format!("old cache {secret}"), &Lang::Ko)
+            .call_day_summary_api(&secret, &format!("old cache {secret}"), &Lang::Ko)
             .await
             .unwrap();
         provider

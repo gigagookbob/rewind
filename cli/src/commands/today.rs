@@ -206,7 +206,7 @@ async fn write_day_summary(
     if !wants_day_summary(sources) {
         return None;
     }
-    let input = super::summary::collect_work_summaries(sources, true);
+    let input = super::slack::collect_work_summaries(sources, true);
     if input.is_empty() {
         return None;
     }

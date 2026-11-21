@@ -27,6 +27,6 @@ Each milestone is independently buildable and testable.
 ## M5: Polish & Extensions
 
 - ~~Sensitive data masking~~ (v0.5.0 — `redactor` module, 8 built-in patterns, config toggle)
-- ~~`rwd summary` progress summaries~~ (v0.8.0 — caching, Markdown summary, clipboard copy)
+- ~~`rwd summary` progress summaries~~ (v0.8.0 — caching, Markdown summary, clipboard copy; command later removed in favor of the `rwd today` day summary and `rwd slack`)
 - ~~`rwd slack` share message~~ (v0.9.0 — non-developer friendly Slack message, cache freshness notice)
 - i18n English-first conversion (v0.10.0 — externalized prompts, `--lang` flag, EN/KO support)

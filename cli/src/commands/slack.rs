@@ -1,9 +1,9 @@
-//! Summary and Slack text workflows built from cached daily analyses.
+//! Slack text workflow built from cached daily analyses.
 
 use super::collection::collect_sources;
 use super::display::{RESET, YELLOW};
 use super::{resolve_lang, run_today};
-use crate::{analyzer, cache, config, output, sources};
+use crate::{analyzer, cache, config, sources};
 
 /// Loads today's analysis cache, running the full analysis first when the
 /// cache is missing or stale for the current timezone rules.
@@ -31,7 +31,7 @@ async fn load_cache_or_analyze(
         && cache::is_timezone_compatible(&cached, today)
         && cache::fingerprints_match(&cached, &fingerprints)
     {
-        return Ok(prepare_cache_for_summary(cached, &run, config.as_ref()));
+        return Ok(prepare_cache_for_sharing(cached, &run, config.as_ref()));
     }
 
     eprintln!(
@@ -46,7 +46,7 @@ async fn load_cache_or_analyze(
     {
         return Err("No current daily analysis is available after refreshing the cache".into());
     }
-    Ok(prepare_cache_for_summary(cached, &run, config.as_ref()))
+    Ok(prepare_cache_for_sharing(cached, &run, config.as_ref()))
 }
 
 /// Reloads the cache written by `run_today`. Exits when analysis produced none.
@@ -61,7 +61,7 @@ fn reload_cache_after_analysis(today: chrono::NaiveDate) -> cache::TodayCache {
 }
 
 /// Use the same local project and source checks as the today cache display.
-fn prepare_cache_for_summary(
+fn prepare_cache_for_sharing(
     mut cached: cache::TodayCache,
     run: &super::collection::CollectionRun,
     config: Option<&config::Config>,
@@ -146,51 +146,11 @@ pub(super) fn collect_work_summaries(
     }
 }
 
-/// Generates a development progress summary for today.
-///
-/// 1. Loads today's cache (runs `run_today()` first if missing).
-/// 2. Collects work_summary from all sessions and sends to LLM.
-/// 3. Prints summary to terminal, appends to daily Markdown, copies to clipboard.
-pub(crate) async fn run_summary(
-    lang_flag: Option<String>,
-    target_date: chrono::NaiveDate,
-    no_cache: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let today = target_date;
-
-    if no_cache {
-        run_today(false, None, today, true, false).await?;
-    }
-
-    let cached = load_cache_or_analyze(today).await?;
-
-    let summaries_text = collect_work_summaries(&cached.sources, false);
-    if summaries_text.is_empty() {
-        println!("{}", crate::messages::error::NO_SESSIONS);
-        return Ok(());
-    }
-
-    println!("{}", crate::messages::status::SUMMARY_GENERATING);
-    let mut loaded_config = config::load_config_if_exists();
-    let lang = resolve_lang(&lang_flag, &mut loaded_config).unwrap_or(config::Lang::En);
-    let summary = analyzer::analyze_summary(&summaries_text, &lang).await?;
-
-    println!("\n{}", crate::messages::status::SUMMARY_HEADER);
-    println!("{summary}");
-
-    // Append summary section to daily Markdown file.
-    append_summary_to_markdown(today, &summary)?;
-
-    copy_to_clipboard(&summary);
-    println!("\n{}", crate::messages::status::COPIED_TO_CLIPBOARD);
-
-    Ok(())
-}
-
 /// Generates a Slack-ready message from today's analysis.
 ///
-/// Similar to `run_summary()` but uses SLACK_PROMPT for Slack-friendly formatting.
-/// Only outputs to terminal and copies to clipboard (no Obsidian save).
+/// Loads today's cache (running `run_today()` first if needed), sends every
+/// session's work_summary to the LLM with SLACK_PROMPT, then prints the result
+/// and copies it to the clipboard. Nothing is saved to Obsidian.
 pub(crate) async fn run_slack(
     lang_flag: Option<String>,
     target_date: chrono::NaiveDate,
@@ -266,22 +226,6 @@ fn copy_to_clipboard(text: &str) {
     }
 }
 
-/// Updates only the unchanged rwd summary region, preserving user headings.
-fn append_summary_to_markdown(
-    date: chrono::NaiveDate,
-    summary: &str,
-) -> Result<(), output::OutputError> {
-    let vault_path = output::load_vault_path()
-        .map_err(|e| crate::messages::error::vault_path_load_failed(&e))?;
-    let saved = output::save_summary_to_vault(&vault_path, date, summary)
-        .map_err(|e| crate::messages::error::file_save_failed(&e))?;
-    println!(
-        "{}",
-        crate::messages::status::markdown_saved(&saved.display())
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,7 +275,7 @@ mod cache_project_tests {
     use super::*;
 
     #[test]
-    fn test_summary_uses_current_local_project_instead_of_cached_or_ai_identity() {
+    fn test_slack_uses_current_local_project_instead_of_cached_or_ai_identity() {
         let cached: cache::TodayCache = serde_json::from_value(serde_json::json!({
             "date":"2099-01-01", "sources":[["Codex",{"sessions":[{
                 "session_id":"s1","work_summary":"work","decisions":[],"curiosities":[],"corrections":[],
@@ -364,7 +308,7 @@ mod cache_project_tests {
                 },
             }],
         };
-        let prepared = prepare_cache_for_summary(cached, &run, None);
+        let prepared = prepare_cache_for_sharing(cached, &run, None);
         assert_eq!(
             prepared.sources[0].1.sessions[0]
                 .project

@@ -6,7 +6,6 @@
 rwd today:       CLI entry → source adapters (log discovery, JSONL parsing, session tasks) → cache check → LLM provider call (Anthropic or OpenAI API) → day summary from work_summaries (DAY_PROMPT) → Markdown generation → Obsidian Vault save
 rwd today --dry-run: CLI entry → source adapters → per-source session list → exit (no LLM provider, cache, or Markdown)
 rwd today -b:    CLI entry → spawn background worker → exit immediately → OS notification on completion
-rwd summary:     CLI entry → cache load → collect work_summaries → LLM API (SUMMARY_PROMPT) → Obsidian save + clipboard copy
 rwd slack:       CLI entry → cache load → collect work_summaries → LLM API (SLACK_PROMPT) → clipboard copy
 ```
 
@@ -59,7 +58,7 @@ Codex는 대상 날짜 종료 전 UTC 날짜 폴더를 모두 탐색하고 발�
 
 참고를 앞에 붙일 때 당일 근거의 메시지 순번도 같이 이동합니다. 긴 발언을 나누는 모든 부분에는 원래 ID와 참고 시각을 반복합니다. 기존 첫 조각과 마지막 두 조각 선택, 선택한 원문 부분 검사와 최종 입력 상한을 유지합니다. 작은 한도에서는 과거 이유와 초반 당일 내용이 빠질 수 있습니다. 결정, 학습과 정정은 당일 사용자 근거가 있어야 하며 과거 AI와 오늘 사용자 근거의 시간순 정정도 허용합니다. 설명의 의미와 철회 판정은 모델 지시로 처리하며 로컬 검사가 보장하지 않습니다.
 
-`commands/collection.rs`는 메시지, 근거 위치와 시각, 참고 구분을 표준 `Hash`와 `DefaultHasher`로 해시해 `SourceFingerprint.input_digest`에 `multi-day-v1` 정책 접두어와 저장합니다. `Hash`는 자료의 내용을 계산기에 넣는 표준 동작이고 이 해시는 변경 감지용이며 보안 서명이 아닙니다. 새 의존성 없이 동일 입력의 재사용을 판단하려는 선택입니다. Rust 버전이나 플랫폼이 바뀌어 해시가 달라지면 캐시가 한 번 더 갱신될 수 있습니다. 세션 수와 기록 수는 당일 통계로 유지합니다. 구 지문은 기본값 `None`으로 읽어 새 입력과 불일치합니다. `summary`와 `slack`도 재수집 후 동일한 지문과 시간대를 검사합니다. 어댑터 수집이 실패하거나 갱신 뒤 유효한 캐시가 없으면 오래된 작업 요약을 재사용하지 않고 오류를 반환합니다.
+`commands/collection.rs`는 메시지, 근거 위치와 시각, 참고 구분을 표준 `Hash`와 `DefaultHasher`로 해시해 `SourceFingerprint.input_digest`에 `multi-day-v1` 정책 접두어와 저장합니다. `Hash`는 자료의 내용을 계산기에 넣는 표준 동작이고 이 해시는 변경 감지용이며 보안 서명이 아닙니다. 새 의존성 없이 동일 입력의 재사용을 판단하려는 선택입니다. Rust 버전이나 플랫폼이 바뀌어 해시가 달라지면 캐시가 한 번 더 갱신될 수 있습니다. 세션 수와 기록 수는 당일 통계로 유지합니다. 구 지문은 기본값 `None`으로 읽어 새 입력과 불일치합니다. `slack`도 재수집 후 동일한 지문과 시간대를 검사합니다. 어댑터 수집이 실패하거나 갱신 뒤 유효한 캐시가 없으면 오래된 작업 요약을 재사용하지 않고 오류를 반환합니다.
 
 ## Two-Stage Processing
 
@@ -138,7 +137,7 @@ rwd/
 │   ├── commands/        # 명령 실행 흐름
 │   │   ├── mod.rs       # 날짜와 언어 선택, 명령 진입점
 │   │   ├── today.rs     # 일일 로그 수집, 분석, 캐시와 저장
-│   │   ├── summary.rs   # 요약과 Slack용 글 생성, 클립보드 복사
+│   │   ├── slack.rs     # Slack용 글 생성, 클립보드 복사
 │   │   ├── collection.rs# 등록된 어댑터를 차례로 불러 결과와 실패를 모음
 │   │   ├── display.rs   # 정보 상자, --dry-run 세션 목록 출력
 │   │   └── background.rs# 백그라운드 프로세스, 잠금과 알림
