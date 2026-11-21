@@ -63,12 +63,29 @@ pub(crate) async fn run_today(
         if count_matches && timezone_matches {
             println!("\n{}", crate::messages::status::CACHE_USED);
             let cached_sources = prepare_cached_sources(&cached, &run, redactor_enabled);
+            // Caches written before the day summary existed get one now.
+            let day_summary = match cached.day_summary.clone() {
+                Some(summary) => Some(summary),
+                None => {
+                    let summary = write_day_summary(&cached_sources, &lang).await;
+                    if summary.is_some() {
+                        let updated = cache::TodayCache {
+                            day_summary: summary.clone(),
+                            ..cached
+                        };
+                        if let Err(e) = cache::save_cache(&updated, today) {
+                            eprintln!("{}", crate::messages::error::cache_save_failed(&e));
+                        }
+                    }
+                    summary
+                }
+            };
             let source_refs: Vec<(&str, &analyzer::AnalysisResult)> = cached_sources
                 .iter()
                 .map(|(name, result)| (name.as_str(), result))
                 .collect();
-            print_insights(&source_refs);
-            save_combined_analysis(&source_refs, today, verbose)?;
+            print_insights(&source_refs, day_summary.as_deref(), verbose);
+            save_combined_analysis(&source_refs, today, verbose, day_summary.as_deref())?;
             return Ok(());
         }
 
@@ -130,12 +147,13 @@ pub(crate) async fn run_today(
     }
 
     if !results.is_empty() {
+        let day_summary = write_day_summary(&results, &lang).await;
         let source_refs: Vec<(&str, &analyzer::AnalysisResult)> = results
             .iter()
             .map(|(name, result)| (name.as_str(), result))
             .collect();
-        print_insights(&source_refs);
-        save_combined_analysis(&source_refs, today, verbose)?;
+        print_insights(&source_refs, day_summary.as_deref(), verbose);
+        save_combined_analysis(&source_refs, today, verbose, day_summary.as_deref())?;
 
         // Save analysis results to cache.
         let cache_data = cache::TodayCache {
@@ -143,6 +161,7 @@ pub(crate) async fn run_today(
             source_fingerprints: fingerprints,
             timezone_window_key: cache::timezone_window_key(today),
             sources: results,
+            day_summary,
         };
         if let Err(e) = cache::save_cache(&cache_data, today) {
             eprintln!("{}", crate::messages::error::cache_save_failed(&e));
@@ -167,6 +186,29 @@ pub(crate) async fn run_today(
     }
 
     Ok(())
+}
+
+/// Asks the LLM for the digest placed on top of the note. The note is still
+/// saved without it when the call fails, so a failure is only reported.
+async fn write_day_summary(
+    sources: &[(String, analyzer::AnalysisResult)],
+    lang: &config::Lang,
+) -> Option<String> {
+    let input = super::summary::collect_work_summaries(sources);
+    if input.is_empty() {
+        return None;
+    }
+    eprintln!("{}", crate::messages::status::DAY_SUMMARY_GENERATING);
+    match analyzer::analyze_day_summary(&input, lang).await {
+        Ok(summary) => Some(summary.trim().to_string()).filter(|s| !s.is_empty()),
+        Err(e) => {
+            eprintln!(
+                "{YELLOW}{}{RESET}",
+                crate::messages::error::day_summary_failed(&e)
+            );
+            None
+        }
+    }
 }
 
 pub(super) fn prepare_cached_sources(
@@ -285,11 +327,12 @@ fn save_combined_analysis(
     sources: &[(&str, &analyzer::AnalysisResult)],
     date: chrono::NaiveDate,
     verbose: bool,
+    day_summary: Option<&str>,
 ) -> Result<(), output::OutputError> {
     let vault_path = output::load_vault_path()
         .map_err(|e| crate::messages::error::vault_path_load_failed(&e))?;
 
-    let markdown = output::render_combined_markdown(sources, date);
+    let markdown = output::render_daily_note(sources, date, day_summary);
 
     let saved = output::save_to_vault(&vault_path, date, &markdown)
         .map_err(|e| crate::messages::error::file_save_failed(&e))?;
@@ -382,6 +425,7 @@ mod tests {
             source_fingerprints: original.fingerprint_table(),
             timezone_window_key: cache::timezone_window_key(date),
             sources: vec![("Claude Code".into(), analysis)],
+            day_summary: None,
         };
         let saved_cache = serde_json::to_string(&cached).unwrap();
         let unchanged = prepare_cached_sources(

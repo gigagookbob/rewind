@@ -233,6 +233,10 @@ pub mod error {
         )
     }
 
+    pub fn day_summary_failed(e: &dyn std::fmt::Display) -> String {
+        format!("Day summary skipped: {e}")
+    }
+
     pub fn cache_save_failed(e: &dyn std::fmt::Display) -> String {
         format!("Cache save failed: {e}")
     }
@@ -271,6 +275,7 @@ pub mod status {
     pub const CACHE_USED: &str = "Using cached analysis. (no entry changes)";
     pub const CACHE_BYPASSED: &str = "Ignoring cache. (--no-cache)";
     pub const REWIND_DONE: &str = "Today's daily rewind is ready!";
+    pub const DAY_SUMMARY_GENERATING: &str = "Writing the day summary...";
     pub const SUMMARY_GENERATING: &str = "Generating development progress summary...";
     pub const SUMMARY_HEADER: &str = "=== Development Progress ===";
     pub const SLACK_GENERATING: &str = "Generating Slack message...";
@@ -378,10 +383,8 @@ pub mod display {
     pub const ATTRIBUTION_NOTE: &str = "AI interpretation; only quote attribution checked / AI 해석이며 인용의 원문 일치와 위치만 검사했습니다.";
     pub const DECISIONS_LABEL: &str = "Key Decisions";
     pub const CORRECTIONS_LABEL: &str = "Corrections & Preference Changes";
-
-    pub fn summary_line(work_summary: &str) -> String {
-        format!("  Summary: {}", work_summary)
-    }
+    pub const QUESTIONS_LABEL: &str = "Unresolved Questions / 풀리지 않은 질문";
+    pub const DAY_SUMMARY_LABEL: &str = "Today / 오늘 한 일";
 
     pub fn session_count_with_tokens(count: usize, total_in: &str, total_out: &str) -> String {
         format!("Sessions: {count}  in {total_in}  out {total_out}")
@@ -440,9 +443,12 @@ pub mod dry_run {
 /// English translations of the current Korean headers — Task 2 will
 /// replace the Korean literals with these constants.
 pub mod markdown {
-    pub const WORK_SUMMARY_HEADER: &str = "### Work Summary";
-    pub const DECISIONS_HEADER: &str = "### Key Decisions";
-    pub const CORRECTIONS_HEADER: &str = "### Corrections & Preference Changes";
+    pub const DAY_SUMMARY_HEADER: &str = "## Today / 오늘 한 일";
+    pub const DECISIONS_HEADER: &str = "#### Key Decisions";
+    pub const CORRECTIONS_HEADER: &str = "#### Corrections & Preference Changes";
+    pub const QUESTIONS_HEADER: &str = "#### Unresolved Questions / 풀리지 않은 질문";
+    pub const SHORT_SESSIONS_HEADER: &str = "### Short Sessions / 짧은 세션";
+    pub const EVIDENCE_TITLE: &str = "Evidence / 근거";
     pub const CORRECTION_MODEL: &str = "**Model**";
     pub const CORRECTION_FIX: &str = "**User response**";
     /// Section header for development progress in daily Markdown files.

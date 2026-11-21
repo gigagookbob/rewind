@@ -230,7 +230,7 @@ fn test_retrospective_cached_checks_never_restore_missing_or_moved_attribution()
 }
 
 #[test]
-fn test_retrospective_output_distinguishes_answer_resolution_and_work_states() {
+fn test_retrospective_output_omits_answered_questions_and_follow_up_states() {
     let mut result = result();
     validate(&mut result, &sources());
     let render = |result: &insight::AnalysisResult| {
@@ -240,12 +240,26 @@ fn test_retrospective_output_distinguishes_answer_resolution_and_work_states() {
         )
     };
     let md = render(&result);
+    // Only an answered question and tracked work: one line, no state labels.
+    assert!(md.contains("- **질문과 작업 확인** (Codex): test"));
+    for hidden in [
+        "답변 있음",
+        "회귀 검사",
+        "진행 요청",
+        "완료 보고",
+        "[!quote]",
+    ] {
+        assert!(!md.contains(hidden), "{hidden}");
+    }
+    // An unanswered question is still worth rereading and keeps its evidence.
+    result.sessions[0].questions[0].updates.clear();
+    let md = render(&result);
     assert!(md.contains("### 질문과 작업 확인"));
-    assert!(md.contains("#### Work Summary"));
-    assert!(md.contains("답변 있음, 해결 미확인"));
-    assert!(md.contains("AI 제안"));
-    assert!(md.contains("진행 요청"));
-    assert!(md.contains("완료 보고"));
+    assert!(md.contains("- 왜 실패합니까? (Answer and resolution unknown / 답변 및 해결 미확인)"));
+    assert!(md.contains("> [!quote]- Evidence / 근거 (2)"));
+    assert!(md.contains("> Log: /synthetic/log.jsonl"));
+    assert!(md.contains("> - USER line 1 \\[m1\\]"));
+    assert!(!md.contains("/synthetic/log.jsonl:1"));
     assert!(!md.contains("- [ ]"));
     assert!(!md.contains("- [x]"));
 }
@@ -260,7 +274,7 @@ fn test_retrospective_legacy_question_never_defaults_to_unresolved_or_completed(
         &[("Old", &old)],
         chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap(),
     );
-    assert!(md.contains("상태와 근거 미확인"));
+    assert!(!md.contains("왜?"));
     assert!(md.contains("작업 제목 미확인"));
     assert!(!md.contains("미해결 명시"));
     assert!(!md.contains("완료 보고"));
@@ -274,9 +288,8 @@ fn test_retrospective_new_text_cannot_inject_markers_links_or_terminal_controls(
     let session = &mut result.sessions[0];
     session.task_title.as_mut().unwrap().text = attack.into();
     session.questions[0].question = attack.into();
-    session.questions[0].updates[0].detail = attack.into();
+    session.questions[0].updates.clear();
     session.follow_ups[0].task = attack.into();
-    session.follow_ups[0].updates[0].detail = attack.into();
     session.session_id = attack.into();
     session.project = Some(super::retrospective::Project {
         directory: format!("/tmp/{attack}"),
@@ -288,12 +301,7 @@ fn test_retrospective_new_text_cannot_inject_markers_links_or_terminal_controls(
     assert!(!md.contains("<!-- rwd:"));
     assert!(!md.contains("[link]("));
     assert!(!md.contains('\u{1b}'));
-    let lines = crate::output::retrospective::lines(&result.sessions[0]);
-    assert!(
-        lines
-            .iter()
-            .all(|line| !line.contains('\u{1b}') && !line.contains('\n'))
-    );
+    assert!(md.contains("[!quote]"));
 }
 
 #[test]
@@ -390,21 +398,18 @@ fn test_retrospective_explicit_user_state_survives_answers_and_changes_only_on_u
         let check = |result: &insight::AnalysisResult, label: &str| {
             let session = &result.sessions[0];
             assert!(session.questions[0].status_label().contains(label));
-            let lines = crate::output::retrospective::lines(session);
-            assert!(
-                lines
-                    .iter()
-                    .any(|line| line.starts_with(session.questions[0].status_label()))
-            );
+            let open = label == "미해결 명시";
+            assert_eq!(session.questions[0].is_unresolved(), open);
             let md = crate::output::render_combined_markdown(
                 &[("Codex", result)],
                 chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap(),
             );
-            assert!(md.contains(&crate::output::escape_markdown(&format!(
-                "{}: {}",
-                session.questions[0].status_label(),
-                session.questions[0].question
-            ))));
+            let shown = format!(
+                "- {} ({})",
+                session.questions[0].question,
+                session.questions[0].status_label()
+            );
+            assert_eq!(md.contains(&shown), open);
         };
         check(&result, label);
         sources.push(source(7, "USER", next_text, false));
@@ -423,11 +428,11 @@ fn test_retrospective_explicit_user_state_survives_answers_and_changes_only_on_u
 fn test_retrospective_user_request_suggestion_acceptance_completion_and_withdrawal_remain_distinct()
 {
     for (state, label) in [
-        ("request", "사용자 요청"),
-        ("proposal", "AI 제안"),
-        ("accepted", "진행 요청"),
-        ("completed", "완료 보고"),
-        ("withdrawn", "사용자 철회"),
+        ("request", "UserRequest"),
+        ("proposal", "AiSuggestion"),
+        ("accepted", "Accepted"),
+        ("completed", "Completed"),
+        ("withdrawn", "Withdrawn"),
     ] {
         let mut sources = sources();
         let mut result = result();
@@ -457,17 +462,12 @@ fn test_retrospective_user_request_suggestion_acceptance_completion_and_withdraw
             .collect();
         evidence::revalidate_cached_session(&mut cached.sessions[0], &sources, &messages, true);
         assert_eq!(cached.sessions[0].follow_ups.len(), 1, "{state}");
-        assert!(
-            cached.sessions[0].follow_ups[0]
-                .status_label()
-                .contains(label),
-            "{state}"
-        );
-        assert!(
-            crate::output::retrospective::lines(&cached.sessions[0])
-                .iter()
-                .any(|line| line.starts_with(cached.sessions[0].follow_ups[0].status_label()))
-        );
+        let task = &cached.sessions[0].follow_ups[0];
+        let kept = match task.updates.last() {
+            Some(update) => format!("{:?}", update.kind),
+            None => format!("{:?}", task.origin),
+        };
+        assert_eq!(kept, label, "{state}");
     }
 }
 

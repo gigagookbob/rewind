@@ -37,6 +37,10 @@ pub struct TodayCache {
     pub timezone_window_key: Option<String>,
     /// Per-source analysis results.
     pub sources: Vec<(String, AnalysisResult)>,
+    /// Day digest shown on top of the note. Caches written before it existed
+    /// load as None and get one generated on the next run.
+    #[serde(default)]
+    pub day_summary: Option<String>,
 }
 
 /// Source fingerprints keyed by adapter id, in stable order for JSON output.
@@ -192,6 +196,7 @@ mod tests {
             source_fingerprints: FingerprintTable::new(),
             timezone_window_key,
             sources: Vec::new(),
+            day_summary: None,
         }
     }
 

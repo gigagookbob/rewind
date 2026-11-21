@@ -1025,6 +1025,7 @@ mod tests {
             source_fingerprints: Default::default(),
             timezone_window_key: None,
             sources: vec![("Codex".into(), result)],
+            day_summary: None,
         };
         let saved = serde_json::to_string(&cache).unwrap();
         let loaded: crate::cache::TodayCache = serde_json::from_str(&saved).unwrap();
@@ -1041,9 +1042,9 @@ mod tests {
             chrono::NaiveDate::from_ymd_opt(2026, 10, 31).unwrap(),
         );
         assert!(terminal.contains("/tmp/synthetic.jsonl:27 [m1]"));
-        assert!(md.contains("/tmp/synthetic.jsonl:27 \\[m1\\]"));
+        assert!(md.contains("> Log: /tmp/synthetic.jsonl"));
+        assert!(md.contains("line 27 \\[m1\\]"));
         assert!(md.contains("시간대가 달라 키도 달라졌습니다."));
-        assert!(md.contains("/tmp/synthetic.jsonl:27"));
         assert!(md.contains("USER"));
         assert!(!md.contains("근거 미확인"));
     }
