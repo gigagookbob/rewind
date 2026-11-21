@@ -257,6 +257,15 @@ pub mod error {
         format!("File save failed: {e}")
     }
 
+    pub fn release_check_failed(status: u16) -> String {
+        let hint = match status {
+            403 | 429 => "GitHub API rate limit may have been reached — try again later.",
+            404 => "The release repository was not found — reinstall with the install script.",
+            _ => "GitHub may be temporarily unavailable — try again shortly.",
+        };
+        format!("Could not check the latest release (HTTP {status}). {hint}")
+    }
+
     pub fn download_failed(status: u16) -> String {
         format!(
             "Download failed (HTTP {status}). Release assets may not be ready yet — try again shortly."
@@ -665,5 +674,20 @@ mod tests {
         let long_body = "x".repeat(400);
         let msg = error::openai_api_request_failed(&500, &long_body);
         assert!(msg.contains("...(truncated)"));
+    }
+
+    #[test]
+    fn test_release_check_failed_includes_status_and_hint() {
+        let not_found = error::release_check_failed(404);
+        assert!(not_found.contains("HTTP 404"));
+        assert!(not_found.contains("install script"));
+
+        let rate_limited = error::release_check_failed(403);
+        assert!(rate_limited.contains("HTTP 403"));
+        assert!(rate_limited.contains("rate limit"));
+
+        let server_error = error::release_check_failed(503);
+        assert!(server_error.contains("HTTP 503"));
+        assert!(server_error.contains("temporarily unavailable"));
     }
 }

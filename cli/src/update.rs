@@ -44,15 +44,19 @@ fn should_skip_update_notice(current_exe: &Path) -> bool {
 pub async fn check_latest_version() -> Result<String, Box<dyn std::error::Error>> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
     let client = reqwest::Client::new();
-    let resp: serde_json::Value = client
-        .get(&url)
-        .header("User-Agent", "rwd")
-        .send()
-        .await?
-        .json()
-        .await?;
+    let resp = client.get(&url).header("User-Agent", "rwd").send().await?;
 
-    let tag = resp
+    // GitHub returns a JSON error body on 4xx/5xx (e.g. 404 for a missing or
+    // private repo, 403 for rate limiting). Check the status before parsing so
+    // the real cause is reported instead of "Release tag not found".
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(crate::messages::error::release_check_failed(status.as_u16()).into());
+    }
+
+    let body: serde_json::Value = resp.json().await?;
+
+    let tag = body
         .get("tag_name")
         .and_then(|v| v.as_str())
         .ok_or(crate::messages::error::RELEASE_TAG_NOT_FOUND)?;
