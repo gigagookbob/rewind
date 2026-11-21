@@ -1,6 +1,16 @@
 <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="64" height="64" rx="16" fill="#09090B" />
-  <rect x="4" y="4" width="56" height="56" rx="12" stroke="#3F3F46" stroke-width="2" />
-  <path d="M32 32L52 16V48L32 32Z" fill="none" stroke="#A855F7" stroke-width="4" stroke-linejoin="round" />
-  <path d="M12 32L32 16V48L12 32Z" fill="none" stroke="#A855F7" stroke-width="4" stroke-linejoin="round" />
+  <defs>
+    <linearGradient id="bg" x1="32" y1="0" x2="32" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#27272A" />
+      <stop offset="1" stop-color="#09090B" />
+    </linearGradient>
+    <linearGradient id="edge" x1="32" y1="0" x2="32" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.22" />
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.04" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#bg)" />
+  <rect x="1" y="1" width="62" height="62" rx="14" stroke="url(#edge)" stroke-width="2" />
+  <path d="M36 32L49 21.5V42.5L36 32Z" fill="#71717A" stroke="#71717A" stroke-width="5" stroke-linejoin="round" />
+  <path d="M15 32L28 21.5V42.5L15 32Z" fill="#FAFAFA" stroke="#FAFAFA" stroke-width="5" stroke-linejoin="round" />
 </svg>
