@@ -276,8 +276,6 @@ pub mod status {
     pub const CACHE_BYPASSED: &str = "Ignoring cache. (--no-cache)";
     pub const REWIND_DONE: &str = "Today's daily rewind is ready!";
     pub const DAY_SUMMARY_GENERATING: &str = "Writing the day summary...";
-    pub const SUMMARY_GENERATING: &str = "Generating development progress summary...";
-    pub const SUMMARY_HEADER: &str = "=== Development Progress ===";
     pub const SLACK_GENERATING: &str = "Generating Slack message...";
     pub const COPIED_TO_CLIPBOARD: &str = "Copied to clipboard.";
     pub const PROBING_RATE_LIMITS: &str = "Checking API rate limits...";
@@ -451,8 +449,6 @@ pub mod markdown {
     pub const EVIDENCE_TITLE: &str = "Evidence / 근거";
     pub const CORRECTION_MODEL: &str = "**Model**";
     pub const CORRECTION_FIX: &str = "**User response**";
-    /// Section header for development progress in daily Markdown files.
-    pub const PROGRESS_SECTION_HEADER: &str = "## Development Progress";
 }
 
 /// API key verification messages.

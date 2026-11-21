@@ -129,7 +129,7 @@ mod tests {
             .open(dir.join(format!(".{date}.rwd.lock")))
             .unwrap();
         lock.try_lock().unwrap();
-        assert!(save(&dir, date, managed::Section::Summary, "new").is_err());
+        assert!(save(&dir, date, managed::Section::LegacySummary, "new").is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), "original");
         drop(lock);
         save(&dir, date, managed::Section::Analysis, "new").unwrap();
@@ -168,13 +168,13 @@ mod tests {
     }
 
     #[test]
-    fn test_summary_can_create_note_and_both_regions_remain_unique() {
+    fn test_legacy_summary_and_analysis_regions_remain_unique() {
         let dir = directory();
         let date = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
-        let path = save(&dir, date, managed::Section::Summary, "progress").unwrap();
+        let path = save(&dir, date, managed::Section::LegacySummary, "progress").unwrap();
         for _ in 0..3 {
             save(&dir, date, managed::Section::Analysis, "analysis").unwrap();
-            save(&dir, date, managed::Section::Summary, "progress").unwrap();
+            save(&dir, date, managed::Section::LegacySummary, "progress").unwrap();
         }
         let saved = fs::read_to_string(path).unwrap();
         assert_eq!(saved.matches("<!-- rwd:analysis:v1:").count(), 1);

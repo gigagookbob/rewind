@@ -5,8 +5,6 @@ use crate::config::Lang;
 
 const SYSTEM_PROMPT_EN: &str = include_str!("../../prompts/system_en.md");
 const SYSTEM_PROMPT_KO: &str = include_str!("../../prompts/system_ko.md");
-const SUMMARY_PROMPT_EN: &str = include_str!("../../prompts/summary_en.md");
-const SUMMARY_PROMPT_KO: &str = include_str!("../../prompts/summary_ko.md");
 const DAY_PROMPT_EN: &str = include_str!("../../prompts/day_en.md");
 const DAY_PROMPT_KO: &str = include_str!("../../prompts/day_ko.md");
 const SLACK_PROMPT_EN: &str = include_str!("../../prompts/slack_en.md");
@@ -16,13 +14,6 @@ fn get_system_prompt(lang: &Lang) -> &'static str {
     match lang {
         Lang::En => SYSTEM_PROMPT_EN,
         Lang::Ko => SYSTEM_PROMPT_KO,
-    }
-}
-
-fn get_summary_prompt(lang: &Lang) -> &'static str {
-    match lang {
-        Lang::En => SUMMARY_PROMPT_EN,
-        Lang::Ko => SUMMARY_PROMPT_KO,
     }
 }
 
@@ -103,23 +94,6 @@ impl LlmProvider {
         .await
     }
 
-    /// Calls the summary API with language-selected prompt.
-    pub async fn call_summary_api(
-        &self,
-        api_key: &str,
-        session_summaries: &str,
-        lang: &Lang,
-    ) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
-        self.call_text_api(
-            api_key,
-            get_summary_prompt(lang),
-            session_summaries,
-            16_384,
-            super::planner::RateLimits::default_generous().input_tokens_per_minute,
-        )
-        .await
-    }
-
     /// Calls the API for the private day digest placed on top of the daily note.
     pub async fn call_day_summary_api(
         &self,
@@ -155,7 +129,7 @@ impl LlmProvider {
     }
 
     /// Calls the API with an arbitrary system prompt for plain-text output
-    /// (summary, Slack message, chunk summarization).
+    /// (day summary, Slack message, chunk summarization).
     pub async fn call_text_api(
         &self,
         api_key: &str,
