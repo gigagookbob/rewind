@@ -1,5 +1,5 @@
 //! Claude Code adapter: reads `<root>/<project>/*.jsonl` session logs, plus
-//! each session's `<project>/<session>/subagents/` records (SPEC.md, stage 4).
+//! each session's `<project>/<session>/subagents/` records.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -177,7 +177,7 @@ impl SourceAdapter for ClaudeAdapter {
 
 /// Folder name, under a session folder, that holds subagent record files.
 const SUBAGENTS_DIR: &str = "subagents";
-/// Names used when the parent log has no `agentType` (SPEC.md, stage 4).
+/// Names used when the parent log has no `agentType`.
 const SUBAGENT_NAME_WORKFLOW: &str = "workflow";
 const SUBAGENT_NAME_DEFAULT: &str = "subagent";
 

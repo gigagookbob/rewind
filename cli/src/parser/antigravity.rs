@@ -3,7 +3,7 @@
 // Reads `brain/<conversation id>/.system_generated/logs/transcript_full.jsonl`
 // (one conversation step per line) and the conversation ids in agy's
 // `history.jsonl`. The format has no public documentation; the field notes
-// below come from reading this machine's logs (SPEC.md, Antigravity adapter).
+// below come from reading this machine's logs.
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -12,7 +12,7 @@ use std::io::BufRead;
 use std::path::Path;
 
 /// User prompt step. Verified: all 86 USER_INPUT lines wrap the typed text
-/// in <USER_REQUEST> (SPEC.md, Antigravity line structure).
+/// in <USER_REQUEST>.
 pub const STEP_USER_INPUT: &str = "USER_INPUT";
 /// Model response step: `content` = answer, `thinking`, `tool_calls[].name`.
 /// Verified against SQLite step payloads (100 answers, 154 thoughts).

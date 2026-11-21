@@ -17,22 +17,22 @@ use crate::parser::{self, roots};
 pub const EXCLUDED_PRINT_MODE: &str = "print-mode";
 
 /// agy's data folder under `~/.gemini`. Only conversations under it get the
-/// `agy -p` rule (SPEC.md, skipping -p runs).
+/// `agy -p` rule.
 const AGY_DATA_DIR: &str = "antigravity-cli";
 /// Data folders under `~/.gemini` in discovery order: agy, the Antigravity
 /// app, the Antigravity IDE. Which app writes which folder is guessed from the
-/// names; both app folders are read the same way (SPEC.md, files read).
+/// names; both app folders are read the same way.
 const GEMINI_DATA_DIRS: [&str; 3] = [AGY_DATA_DIR, "antigravity", "antigravity-ide"];
 const BRAIN_DIR: &str = "brain";
 /// agy prompt history next to `brain/`. Verified: it lists every interactive
-/// agy conversation and none of the 21 non-interactive runs (SPEC.md, skipping -p runs).
+/// agy conversation and none of the 21 non-interactive runs.
 const AGY_HISTORY_FILE: &str = "history.jsonl";
 /// Full transcript inside a conversation folder. The sibling `transcript.jsonl`
-/// (truncated copy) and `chunks/` (split copy) are never read (SPEC.md, files read).
+/// (truncated copy) and `chunks/` (split copy) are never read.
 const TRANSCRIPT_PATH: [&str; 3] = [".system_generated", "logs", "transcript_full.jsonl"];
 /// Conversations with at least this many user inputs count as interactive
 /// even when missing from history. Inferred: all 21 non-interactive runs had
-/// exactly one input (SPEC.md, skipping -p runs).
+/// exactly one input.
 const INTERACTIVE_MIN_USER_INPUTS: usize = 2;
 
 #[derive(Debug, Default)]
@@ -218,7 +218,7 @@ fn load_histories(
     histories
 }
 
-/// `agy -p` heuristic (SPEC.md, skipping -p runs): a conversation found only
+/// `agy -p` heuristic: a conversation found only
 /// under agy roots, with fewer than two user inputs, whose id is missing from
 /// every agy history. When a history cannot be read the run cannot be judged,
 /// so the conversation is kept.

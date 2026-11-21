@@ -1,6 +1,6 @@
 //! Codex adapter: reads `<root>/YYYY/MM/DD/rollout-*.jsonl` session logs.
 //! Subagent rollouts are not sessions; their task and result are spliced
-//! into the interactive parent's prompt (SPEC.md, stage 4).
+//! into the interactive parent's prompt.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
