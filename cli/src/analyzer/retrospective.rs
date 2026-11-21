@@ -146,6 +146,24 @@ impl Project {
 }
 
 impl Question {
+    /// True unless the user confirmed resolution or the AI answered and the
+    /// user did not say it remained open.
+    pub fn is_unresolved(&self) -> bool {
+        let explicit = self.updates.iter().rev().map(|u| u.kind).find(|kind| {
+            matches!(
+                kind,
+                QuestionUpdateKind::Resolved | QuestionUpdateKind::Open
+            )
+        });
+        match explicit {
+            Some(kind) => kind == QuestionUpdateKind::Open,
+            None => !self
+                .updates
+                .iter()
+                .any(|u| u.kind == QuestionUpdateKind::Answer),
+        }
+    }
+
     pub fn status_label(&self) -> &'static str {
         let explicit = self.updates.iter().rev().map(|u| u.kind).find(|kind| {
             matches!(
@@ -169,44 +187,6 @@ impl Question {
         }
     }
 }
-impl QuestionUpdateKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Answer => "AI answer / AI 답변",
-            Self::Resolved => "User resolution / 사용자 해결 확인",
-            Self::Open => "User unresolved / 사용자 미해결 명시",
-            Self::Unknown => "Unknown / 미확인",
-        }
-    }
-}
-impl FollowUpOrigin {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::UserRequest => "User request / 사용자 요청",
-            Self::AiSuggestion => "AI suggestion / AI 제안",
-            Self::Unknown => "Origin unknown / 출발 미확인",
-        }
-    }
-}
-impl FollowUp {
-    pub fn status_label(&self) -> &'static str {
-        match self.updates.last().map(|u| u.kind) {
-            Some(kind) => kind.label(),
-            None => self.origin.label(),
-        }
-    }
-}
-impl FollowUpUpdateKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Accepted => "Requested to proceed / 진행 요청",
-            Self::Completed => "Completion reported / 완료 보고",
-            Self::Withdrawn => "Withdrawn by user / 사용자 철회",
-            Self::Unknown => "Status unknown / 상태 미확인",
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

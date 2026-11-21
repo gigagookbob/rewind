@@ -327,6 +327,18 @@ pub async fn analyze_summary(
     Ok(raw_response)
 }
 
+/// Generates the day digest shown on top of the daily note.
+pub async fn analyze_day_summary(
+    session_summaries: &str,
+    lang: &crate::config::Lang,
+) -> Result<String, AnalyzerError> {
+    let (provider, api_key) = provider::load_provider()?;
+    let (raw_response, _usage) = provider
+        .call_day_summary_api(&api_key, session_summaries, lang)
+        .await?;
+    Ok(raw_response)
+}
+
 /// Generates a Slack-ready message from concatenated session work_summaries.
 pub async fn analyze_slack(
     session_summaries: &str,

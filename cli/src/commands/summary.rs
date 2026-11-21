@@ -75,7 +75,13 @@ fn prepare_cache_for_summary(
 }
 
 /// Opaque per-run project keys avoid sending directories or merging equal names.
-fn collect_work_summaries(cached: &cache::TodayCache) -> String {
+///
+/// Shared text keeps each unknown-project session apart (`merge_unknown` false).
+/// The note's day summary puts them under one heading, as the note body does.
+pub(super) fn collect_work_summaries(
+    sources: &[(String, analyzer::AnalysisResult)],
+    merge_unknown: bool,
+) -> String {
     use crate::analyzer::retrospective::Project;
     use std::collections::{HashMap, HashSet};
     let project = |session: &analyzer::insight::SessionInsight| {
@@ -85,7 +91,7 @@ fn collect_work_summaries(cached: &cache::TodayCache) -> String {
             .and_then(|p| Project::from_directories([p.directory.as_str()]))
     };
     let mut names: HashMap<String, HashSet<Project>> = HashMap::new();
-    for (_, analysis) in &cached.sources {
+    for (_, analysis) in sources {
         for session in &analysis.sessions {
             if let Some(p) = project(session) {
                 names.entry(p.name().into()).or_default().insert(p);
@@ -93,9 +99,10 @@ fn collect_work_summaries(cached: &cache::TodayCache) -> String {
         }
     }
     let mut keys = HashMap::new();
+    let mut unknown_key = None;
     let mut next_key = 1;
     let mut records = Vec::new();
-    for (source_name, analysis) in &cached.sources {
+    for (source_name, analysis) in sources {
         for session in &analysis.sessions {
             let (key, label) = if let Some(p) = project(session) {
                 let key = *keys.entry(p.clone()).or_insert_with(|| {
@@ -109,6 +116,13 @@ fn collect_work_summaries(cached: &cache::TodayCache) -> String {
                     p.name().to_string()
                 };
                 (key, label)
+            } else if merge_unknown {
+                let key = *unknown_key.get_or_insert_with(|| {
+                    let key = next_key;
+                    next_key += 1;
+                    key
+                });
+                (key, "Project unknown / 프로젝트 미확인".to_string())
             } else {
                 let key = next_key;
                 next_key += 1;
@@ -150,7 +164,7 @@ pub(crate) async fn run_summary(
 
     let cached = load_cache_or_analyze(today).await?;
 
-    let summaries_text = collect_work_summaries(&cached);
+    let summaries_text = collect_work_summaries(&cached.sources, false);
     if summaries_text.is_empty() {
         println!("{}", crate::messages::error::NO_SESSIONS);
         return Ok(());
@@ -213,7 +227,7 @@ pub(crate) async fn run_slack(
         eprintln!();
     }
 
-    let summaries_text = collect_work_summaries(&cached);
+    let summaries_text = collect_work_summaries(&cached.sources, false);
     if summaries_text.is_empty() {
         println!("{}", crate::messages::error::NO_SESSIONS);
         return Ok(());
@@ -286,7 +300,7 @@ mod tests {
                 ["Codex", {"sessions":[session("c",Some("/private/a/app")),session("v",None)]}]
             ]
         })).unwrap();
-        let text = collect_work_summaries(&cached);
+        let text = collect_work_summaries(&cached.sources, false);
         assert!(!text.contains("/private/"));
         let rows: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(rows[0]["project_key"], rows[3]["project_key"]);
@@ -295,6 +309,18 @@ mod tests {
         assert_ne!(rows[2]["project_key"], rows[4]["project_key"]);
         assert_eq!(rows[3]["source"], "Codex");
         assert_eq!(rows[3]["session_id"], "c");
+        // The day summary groups unknown-project sessions under one plain label.
+        let merged: serde_json::Value =
+            serde_json::from_str(&collect_work_summaries(&cached.sources, true)).unwrap();
+        assert_eq!(merged[2]["project_key"], merged[4]["project_key"]);
+        assert_eq!(merged[2]["project_label"], merged[4]["project_label"]);
+        assert!(
+            !merged[2]["project_label"]
+                .as_str()
+                .unwrap()
+                .contains("session")
+        );
+        assert_ne!(merged[0]["project_key"], merged[1]["project_key"]);
         assert!(rows[0].get("questions").is_none());
         assert!(rows[0].get("follow_ups").is_none());
     }
@@ -348,7 +374,7 @@ mod cache_project_tests {
             "/actual/app"
         );
         assert!(prepared.sources[0].1.sessions[0].task_title.is_none());
-        let text = collect_work_summaries(&prepared);
+        let text = collect_work_summaries(&prepared.sources, false);
         assert!(
             !text.contains("/actual/")
                 && !text.contains("/impostor/")

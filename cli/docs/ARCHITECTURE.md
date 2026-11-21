@@ -3,7 +3,7 @@
 ## Core Flow
 
 ```
-rwd today:       CLI entry → source adapters (log discovery, JSONL parsing, session tasks) → cache check → LLM provider call (Anthropic or OpenAI API) → Markdown generation → Obsidian Vault save
+rwd today:       CLI entry → source adapters (log discovery, JSONL parsing, session tasks) → cache check → LLM provider call (Anthropic or OpenAI API) → day summary from work_summaries (DAY_PROMPT) → Markdown generation → Obsidian Vault save
 rwd today --dry-run: CLI entry → source adapters → per-source session list → exit (no LLM provider, cache, or Markdown)
 rwd today -b:    CLI entry → spawn background worker → exit immediately → OS notification on completion
 rwd summary:     CLI entry → cache load → collect work_summaries → LLM API (SUMMARY_PROMPT) → Obsidian save + clipboard copy

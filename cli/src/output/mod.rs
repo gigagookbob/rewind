@@ -8,7 +8,9 @@ mod vault;
 // TODO: Replace with a dedicated error type via thiserror.
 pub type OutputError = Box<dyn std::error::Error>;
 
+#[cfg(test)]
 pub use markdown::render_combined_markdown;
+pub use markdown::render_daily_note;
 
 use std::path::{Path, PathBuf};
 
@@ -107,9 +109,60 @@ pub fn display_evidence(evidence: &[Evidence]) -> String {
         }
     }
     if output.is_empty() {
-        output.push_str("    Evidence unavailable / 근거 미확인 (기존 결과 포함)\n");
+        output.push_str(&format!("    {EVIDENCE_UNAVAILABLE}\n"));
     }
     output
+}
+
+pub(crate) const EVIDENCE_UNAVAILABLE: &str = "Evidence unavailable / 근거 미확인 (기존 결과 포함)";
+
+/// Compact rows for quotations that still resolve to a log line. The path is
+/// left out when it is the session log already named at the top of the block.
+pub(crate) fn evidence_items(evidence: &[Evidence], log: Option<&Path>) -> Vec<String> {
+    let mut items = Vec::new();
+    for proof in evidence {
+        let Some(location) = &proof.location else {
+            continue;
+        };
+        let place = if log == Some(location.path.as_path()) {
+            format!("line {}", location.line)
+        } else {
+            format!("{}:{}", location.path.display(), location.line)
+        };
+        let time = proof
+            .timestamp
+            .map(|ts| format!(" {}", ts.format("%Y-%m-%dT%H:%M:%SZ")))
+            .unwrap_or_default();
+        let reference = if proof.is_reference {
+            " (Reference / 이전 참고)"
+        } else {
+            ""
+        };
+        items.push(plain(&format!(
+            "- {} {place} [{}]{time}{reference}: {}",
+            proof.role, proof.message_id, proof.quote
+        )));
+    }
+    items
+}
+
+/// More TIL than this per session buries the ones worth rereading.
+pub(crate) const MAX_TIL_PER_SESSION: usize = 3;
+
+pub(crate) fn shown_til(
+    session: &crate::analyzer::insight::SessionInsight,
+) -> impl Iterator<Item = &crate::analyzer::insight::TilItem> {
+    session.til.iter().take(MAX_TIL_PER_SESSION)
+}
+
+/// A session with only a summary is listed in one line instead of a block.
+pub(crate) fn is_short_session(session: &crate::analyzer::insight::SessionInsight) -> bool {
+    session.decisions.is_empty()
+        && session.corrections.is_empty()
+        && session.til.is_empty()
+        && retrospective::unresolved_questions(session)
+            .next()
+            .is_none()
 }
 
 pub(crate) fn plain(text: &str) -> String {

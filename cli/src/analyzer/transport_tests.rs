@@ -75,7 +75,7 @@ async fn test_anthropic_workspace_config_reaches_every_analysis_request() {
         )).unwrap();
         let (mut provider, key) = super::provider::load_provider_from_path(&path).unwrap();
         let recording = Recording::default();
-        recording.0.lock().unwrap().responses = vec![Ok("ok".into()); 3].into();
+        recording.0.lock().unwrap().responses = vec![Ok("ok".into()); 4].into();
         provider.recording = Some(recording.clone());
         provider
             .call_analysis_api(&key, "hello", 1, &Lang::En, 100_000)
@@ -87,6 +87,10 @@ async fn test_anthropic_workspace_config_reaches_every_analysis_request() {
             .unwrap();
         provider
             .call_slack_api(&key, "hello", &Lang::En)
+            .await
+            .unwrap();
+        provider
+            .call_day_summary_api(&key, "hello", &Lang::En)
             .await
             .unwrap();
         for request in &recording.0.lock().unwrap().requests {

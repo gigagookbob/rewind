@@ -276,66 +276,102 @@ fn unicode_display_width(s: &str) -> usize {
     s.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum()
 }
 
-/// Prints projects across sources, with each full session ID and source retained.
-pub(super) fn print_insights(sources: &[(&str, &analyzer::AnalysisResult)]) {
+/// Prints the day summary, then projects across sources. Sessions with only
+/// a summary take one line. Quotations are printed only with `-v`; the saved
+/// note always keeps them in a folded block.
+pub(super) fn print_insights(
+    sources: &[(&str, &analyzer::AnalysisResult)],
+    day_summary: Option<&str>,
+    verbose: bool,
+) {
+    use crate::messages::display as text;
+    use crate::output::{plain, retrospective};
+
     let term_w = terminal_width();
-    println!("\n  {}", crate::messages::display::ATTRIBUTION_NOTE);
-    println!("  {}", crate::output::retrospective::NOTE);
-    for (project, sessions) in crate::output::project_groups(sources) {
-        let label = crate::output::plain(&crate::output::project_label(project.as_ref()));
-        println!("\n{CYAN}  ┌─ Project: {label}{RESET}");
-        for (source_name, session) in sessions {
-            println!("\n  Source: {}", crate::output::plain(source_name));
-            let id_short = crate::output::plain(&session.session_id);
-            println!(
-                "\n{BRIGHT_BLUE}  ▸ {}{RESET}",
-                crate::output::plain(crate::output::retrospective::title(session))
-            );
-            println!("  Session: {id_short}");
-            for line in crate::output::retrospective::lines(session) {
-                println!("  {line}");
+    let proofs = |evidence: &[analyzer::insight::Evidence]| {
+        if verbose {
+            print!("{}", crate::output::display_evidence(evidence));
+        }
+    };
+    if let Some(summary) = day_summary.map(str::trim).filter(|s| !s.is_empty()) {
+        println!("\n{CYAN}  {}{RESET}", text::DAY_SUMMARY_LABEL);
+        // The summary is Markdown for the note; headings read better bare here.
+        for line in summary.lines() {
+            match line.strip_prefix("### ") {
+                Some(project) => println!("\n  {BRIGHT_BLUE}{}{RESET}", plain(project)),
+                None if line.trim().is_empty() => {}
+                None => println!("  {}", plain(line)),
             }
+        }
+    }
+    for (project, sessions) in crate::output::project_groups(sources) {
+        let label = plain(&crate::output::project_label(project.as_ref()));
+        println!("\n{CYAN}  ┌─ Project: {label}{RESET}");
+        let (short, full): (Vec<_>, Vec<_>) = sessions
+            .into_iter()
+            .partition(|(_, session)| crate::output::is_short_session(session));
+        for (source_name, session) in full {
             println!(
-                "{}",
-                crate::messages::display::summary_line(&session.work_summary)
+                "\n{BRIGHT_BLUE}  ▸ {}{RESET}  {DIM}{}{RESET}",
+                plain(retrospective::title(session)),
+                plain(source_name)
             );
+            if verbose {
+                println!("  Session: {}", plain(&session.session_id));
+            }
+            println!("  {}", session.work_summary);
 
             if !session.decisions.is_empty() {
-                println!(
-                    "\n  {YELLOW}{}{RESET}",
-                    crate::messages::display::DECISIONS_LABEL
-                );
+                println!("\n  {YELLOW}{}{RESET}", text::DECISIONS_LABEL);
                 for d in &session.decisions {
                     println!("  • {}", d.what);
                     // The model leaves `why` empty when no reason was stated.
                     if !d.why.trim().is_empty() {
                         println!("    {DIM}→ {}{RESET}", d.why.trim());
                     }
-                    print!("{}", crate::output::display_evidence(&d.evidence));
+                    proofs(&d.evidence);
                 }
             }
 
             if !session.corrections.is_empty() {
-                println!(
-                    "\n  {YELLOW}{}{RESET}",
-                    crate::messages::display::CORRECTIONS_LABEL
-                );
+                println!("\n  {YELLOW}{}{RESET}", text::CORRECTIONS_LABEL);
                 for c in &session.corrections {
                     println!("  {}", c.kind.label());
                     println!("    AI: {}", c.model_said);
                     println!("    User: {}", c.user_corrected);
-                    print!("{}", crate::output::display_evidence(&c.evidence));
+                    proofs(&c.evidence);
                 }
             }
 
-            for til in &session.til {
-                println!("\n  TIL: {}\n    {}", til.title, til.detail);
-                print!("{}", crate::output::display_evidence(&til.evidence));
+            let questions: Vec<_> = retrospective::unresolved_questions(session).collect();
+            if !questions.is_empty() {
+                println!("\n  {YELLOW}{}{RESET}", text::QUESTIONS_LABEL);
+                for q in questions {
+                    println!("  • {} ({})", plain(&q.question), q.status_label());
+                    proofs(&q.evidence);
+                }
             }
+
+            for til in crate::output::shown_til(session) {
+                println!("\n  TIL: {}\n    {}", til.title, til.detail);
+                proofs(&til.evidence);
+            }
+        }
+        if !short.is_empty() {
+            println!();
+        }
+        for (source_name, session) in short {
+            println!(
+                "  · {} {DIM}({}){RESET}: {}",
+                plain(retrospective::title(session)),
+                plain(source_name),
+                session.work_summary.replace('\n', " ")
+            );
         }
     }
     let bottom_line = "─".repeat(if term_w > 2 { term_w - 2 } else { 20 });
     println!("\n{CYAN}  └{bottom_line}{RESET}");
+    println!("  {DIM}{}{RESET}", text::ATTRIBUTION_NOTE);
 }
 
 #[cfg(test)]
