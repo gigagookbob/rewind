@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Defensive deserializer: accepts any JSON type and stringifies non-String values.
-fn string_or_stringify<'de, D>(deserializer: D) -> Result<String, D::Error>
+pub(super) fn string_or_stringify<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -15,13 +15,22 @@ where
     }
 }
 
+/// Defensive deserializer for Vec<T> fields that treats JSON `null` as an empty Vec.
+pub(super) fn vec_or_default<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// Defensive deserializer for Vec<String> fields.
-/// Converts non-String array elements (e.g., objects) to JSON strings.
+/// Converts non-String array elements (e.g., objects) to JSON strings and treats `null` as empty.
 fn vec_string_or_stringify<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let values: Vec<serde_json::Value> = Vec::deserialize(deserializer)?;
+    let values = Option::<Vec<serde_json::Value>>::deserialize(deserializer)?.unwrap_or_default();
     Ok(values
         .into_iter()
         .map(|v| match v {
@@ -46,22 +55,24 @@ pub struct SessionInsight {
     pub project: Option<super::retrospective::Project>,
     #[serde(default)]
     pub task_title: Option<super::retrospective::TaskTitle>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub questions: Vec<super::retrospective::Question>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub follow_ups: Vec<super::retrospective::FollowUp>,
     pub session_id: String,
-    #[serde(deserialize_with = "string_or_stringify")]
+    #[serde(default, deserialize_with = "string_or_stringify")]
     pub work_summary: String,
     /// User's decision points -- what was chosen and why.
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub decisions: Vec<Decision>,
-    /// Questions or confusions the user expressed.
-    #[serde(deserialize_with = "vec_string_or_stringify")]
+    /// Legacy compatibility field; omitted by newer prompts and ignored in output.
+    #[serde(default, deserialize_with = "vec_string_or_stringify")]
     pub curiosities: Vec<String>,
     /// Factual corrections, preference/approach changes, or ambiguous responses.
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub corrections: Vec<Correction>,
     /// Concrete learnings from this session (title + context).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub til: Vec<TilItem>,
 }
 
@@ -69,7 +80,7 @@ pub struct SessionInsight {
 /// Extracted directly from the conversation by the LLM, not derived from curiosities/corrections.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TilItem {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub evidence: Vec<Evidence>,
     /// One-line summary of what was learned.
     #[serde(default, deserialize_with = "string_or_stringify")]
@@ -82,7 +93,7 @@ pub struct TilItem {
 /// A decision point (why option A was chosen over B).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Decision {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub evidence: Vec<Evidence>,
     #[serde(default, deserialize_with = "string_or_stringify")]
     pub what: String,
@@ -95,7 +106,7 @@ pub struct Decision {
 pub struct Correction {
     #[serde(default)]
     pub kind: CorrectionKind,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub evidence: Vec<Evidence>,
     #[serde(default, deserialize_with = "string_or_stringify")]
     pub model_said: String,
@@ -110,7 +121,9 @@ pub struct Evidence {
     pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default)]
     pub is_reference: bool,
+    #[serde(default, deserialize_with = "string_or_stringify")]
     pub message_id: String,
+    #[serde(default, deserialize_with = "string_or_stringify")]
     pub quote: String,
     #[serde(default)]
     pub location: Option<crate::parser::SourceLocation>,
@@ -139,36 +152,66 @@ impl CorrectionKind {
     }
 }
 
-/// Parses Claude API raw text response into an AnalysisResult.
+/// Parses Claude/OpenAI API raw text response into an AnalysisResult.
 ///
 /// The LLM is instructed to return JSON only, but sometimes:
 /// - wraps it in markdown code fences (```json...```)
-/// - prepends free-form text before the JSON object
+/// - prepends or appends free-form text around the JSON object
 ///
-/// We strip those defensively.
+/// We extract the first complete `{"sessions": ...}` object defensively.
 pub fn parse_response(raw_text: &str) -> Result<AnalysisResult, super::AnalyzerError> {
     let cleaned = strip_code_fences(raw_text);
 
     serde_json::from_str::<AnalysisResult>(&cleaned)
         .or_else(|_| extract_json_object(&cleaned))
-        .map_err(|e| crate::messages::error::json_parse_failed(e.line(), e.column()).into())
+        .map_err(|e| {
+            crate::messages::error::json_parse_failed(
+                parse_error_category(&e),
+                e.line(),
+                e.column(),
+            )
+            .into()
+        })
+}
+
+fn parse_error_category(error: &serde_json::Error) -> &'static str {
+    match error.classify() {
+        serde_json::error::Category::Syntax => "syntax",
+        serde_json::error::Category::Eof => "truncated",
+        serde_json::error::Category::Data => "schema",
+        serde_json::error::Category::Io => "io",
+    }
+}
+
+/// Parses one JSON object from the start of `slice`, ignoring trailing text.
+fn parse_prefix_object(slice: &str) -> Result<AnalysisResult, serde_json::Error> {
+    let mut deserializer = serde_json::Deserializer::from_str(slice);
+    AnalysisResult::deserialize(&mut deserializer)
 }
 
 /// Extracts a JSON object from text that may contain non-JSON content.
 ///
-/// Tries `{"sessions"` first (most specific), then falls back to any `{`.
+/// Tries every `{` whose first key is `"sessions"` (supporting pretty-printed
+/// JSON and trailing prose or closing code fences), then falls back to the first `{`.
 fn extract_json_object(text: &str) -> Result<AnalysisResult, serde_json::Error> {
-    // Try the most specific marker first.
-    if let Some(start) = text.find("{\"sessions\"")
-        && let Ok(result) = serde_json::from_str::<AnalysisResult>(&text[start..])
-    {
-        return Ok(result);
+    let mut first_sessions_err = None;
+    for (start, _) in text.match_indices('{') {
+        if !text[start + 1..].trim_start().starts_with("\"sessions\"") {
+            continue;
+        }
+        match parse_prefix_object(&text[start..]) {
+            Ok(result) => return Ok(result),
+            Err(err) => {
+                first_sessions_err.get_or_insert(err);
+            }
+        }
     }
-    // Fall back to first '{'.
+    if let Some(err) = first_sessions_err {
+        return Err(err);
+    }
     if let Some(start) = text.find('{') {
-        return serde_json::from_str::<AnalysisResult>(&text[start..]);
+        return parse_prefix_object(&text[start..]);
     }
-    // Nothing found — re-parse full text to produce the original error.
     serde_json::from_str::<AnalysisResult>(text)
 }
 
@@ -346,5 +389,80 @@ mod tests {
         let result = parse_response(raw).unwrap();
         assert_eq!(result.sessions.len(), 1);
         assert_eq!(result.sessions[0].session_id, "s1");
+    }
+
+    #[test]
+    fn test_parse_response_missing_curiosities_and_optional_arrays_parses_ok() {
+        let json = r#"{"sessions":[{"session_id":"d109d229","work_summary":"다이어그램 생성","task_title":{"text":"다이어그램 생성","evidence":[{"message_id":"m1","quote":"Use skills"}]},"questions":[],"follow_ups":[],"decisions":[],"corrections":[],"til":[]}]}"#;
+        let result = parse_response(json).unwrap();
+        assert_eq!(result.sessions[0].session_id, "d109d229");
+        assert!(result.sessions[0].curiosities.is_empty());
+
+        let minimal = r#"{"sessions":[{"session_id":"s2"}]}"#;
+        let minimal_result = parse_response(minimal).unwrap();
+        assert_eq!(minimal_result.sessions[0].session_id, "s2");
+        assert_eq!(minimal_result.sessions[0].work_summary, "");
+        assert!(minimal_result.sessions[0].decisions.is_empty());
+        assert!(minimal_result.sessions[0].corrections.is_empty());
+        assert!(minimal_result.sessions[0].curiosities.is_empty());
+    }
+
+    #[test]
+    fn test_parse_response_null_collection_fields_default_to_empty() {
+        let json = r#"{"sessions":[{"session_id":"s1","work_summary":null,"decisions":null,"curiosities":null,"corrections":null,"til":null,"questions":[{"question":"질문","evidence":null,"updates":null}],"follow_ups":null}]}"#;
+        let result = parse_response(json).unwrap();
+        let s = &result.sessions[0];
+        assert_eq!(s.work_summary, "");
+        assert!(s.decisions.is_empty());
+        assert!(s.curiosities.is_empty());
+        assert!(s.corrections.is_empty());
+        assert!(s.til.is_empty());
+        assert!(s.follow_ups.is_empty());
+        assert_eq!(s.questions.len(), 1);
+        assert!(s.questions[0].evidence.is_empty());
+        assert!(s.questions[0].updates.is_empty());
+    }
+
+    #[test]
+    fn test_parse_response_with_preamble_braces_code_fence_and_trailing_text() {
+        let raw = r#"참고 {예시} 분석 결과입니다:
+```json
+{
+  "sessions": [
+    {
+      "session_id": "s1",
+      "work_summary": "작업 요약",
+      "decisions": [],
+      "corrections": []
+    }
+  ]
+}
+```
+추가 설명입니다."#;
+        let result = parse_response(raw).unwrap();
+        assert_eq!(result.sessions.len(), 1);
+        assert_eq!(result.sessions[0].session_id, "s1");
+    }
+
+    #[test]
+    fn test_parse_response_error_reports_safe_category_without_body() {
+        let syntax_err = parse_response("private text {invalid}")
+            .unwrap_err()
+            .to_string();
+        assert!(syntax_err.starts_with(crate::messages::error::JSON_PARSE_FAILED_MARKER));
+        assert!(syntax_err.contains("(syntax)"), "{syntax_err}");
+        assert!(!syntax_err.contains("private text"));
+
+        let eof_err = parse_response(r#"{"sessions":[{"session_id":"secret-id""#)
+            .unwrap_err()
+            .to_string();
+        assert!(eof_err.contains("(truncated)"), "{eof_err}");
+        assert!(!eof_err.contains("secret-id"));
+
+        let schema_err = parse_response(r#"{"sessions":[{"work_summary":"secret-summary"}]}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(schema_err.contains("(schema)"), "{schema_err}");
+        assert!(!schema_err.contains("secret-summary"));
     }
 }

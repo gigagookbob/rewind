@@ -8,7 +8,7 @@ use crate::parser::codex::CodexEntry;
 use std::collections::HashMap;
 
 /// Only visible user/assistant text, before log compaction. Never tool output.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SourceMessage {
     pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
     pub is_reference: bool,

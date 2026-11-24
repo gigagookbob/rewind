@@ -109,7 +109,7 @@ pub(crate) async fn run_today(
         crate::messages::status::analyzing(&provider_label)
     );
 
-    let analysis_context = analyzer::prepare_session_analysis_context().await?;
+    let analysis_context = analyzer::prepare_session_analysis_context(today, no_cache).await?;
     let mut results: Vec<(String, analyzer::AnalysisResult)> = Vec::new();
     let mut total_redact = redactor::RedactResult::empty();
 

@@ -15,6 +15,7 @@ pub mod retrospective;
 #[cfg(test)]
 mod retrospective_tests;
 mod retrospective_validation;
+mod session_cache;
 pub mod summarizer;
 
 // TODO: Replace with a dedicated error type via thiserror.
@@ -30,6 +31,24 @@ pub struct ApiUsage {
     pub output_tokens: u64,
 }
 
+/// Only an explicit provider stop reason proves that the output limit was hit.
+#[derive(Debug)]
+pub(super) struct OutputTruncated {
+    pub usage: ApiUsage,
+}
+
+impl std::fmt::Display for OutputTruncated {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "LLM output truncated (stop_reason=max_tokens, output_tokens={}); response body omitted",
+            self.usage.output_tokens
+        )
+    }
+}
+
+impl std::error::Error for OutputTruncated {}
+
 use crate::parser::claude::LogEntry;
 use crate::parser::codex::CodexEntry;
 use crate::redactor::RedactResult;
@@ -41,7 +60,7 @@ use planner::{SessionEstimate, StepStrategy};
 use std::collections::HashMap;
 
 /// Common per-session analysis input shared by every log source.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionTask {
     pub project: Option<retrospective::Project>,
     pub evidence_sources: Vec<evidence::SourceMessage>,
@@ -58,6 +77,7 @@ pub struct SessionAnalysisContext {
     provider: provider::LlmProvider,
     api_key: String,
     rate_limits: planner::RateLimits,
+    cache: session_cache::SessionCache,
 }
 
 /// Starts a terminal spinner on stderr.
@@ -103,7 +123,10 @@ fn print_rate_limit_status(limits: &planner::RateLimits, probed: bool) {
 }
 
 /// Loads provider and probes rate limits once for a full `today` analysis run.
-pub async fn prepare_session_analysis_context() -> Result<SessionAnalysisContext, AnalyzerError> {
+pub async fn prepare_session_analysis_context(
+    date: chrono::NaiveDate,
+    no_cache: bool,
+) -> Result<SessionAnalysisContext, AnalyzerError> {
     let (provider, api_key) = provider::load_provider()?;
     let sp = start_spinner(crate::messages::status::PROBING_RATE_LIMITS.into());
     let result = provider.probe_rate_limits(&api_key).await;
@@ -115,6 +138,7 @@ pub async fn prepare_session_analysis_context() -> Result<SessionAnalysisContext
         provider,
         api_key,
         rate_limits,
+        cache: session_cache::SessionCache::for_date(date, !no_cache)?,
     })
 }
 
@@ -311,6 +335,7 @@ pub async fn analyze_session_tasks(
         &context.api_key,
         verbose,
         lang,
+        &context.cache,
     )
     .await
 }

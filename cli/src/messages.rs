@@ -223,13 +223,13 @@ pub mod error {
     pub const API_NO_TEXT_BLOCK: &str = "No text block in API response";
     pub const OPENAI_EMPTY_CHOICES: &str = "OpenAI response has empty choices";
 
-    /// Substring used by `analyzer/mod.rs` to detect JSON parse errors for retry logic.
+    /// Substring used by `analyzer/executor.rs` to detect JSON parse errors for retry logic.
     /// Must be a prefix of the message produced by `json_parse_failed()`.
     pub const JSON_PARSE_FAILED_MARKER: &str = "LLM response JSON parse failed";
 
-    pub fn json_parse_failed(line: usize, column: usize) -> String {
+    pub fn json_parse_failed(kind: &str, line: usize, column: usize) -> String {
         format!(
-            "LLM response JSON parse failed at line {line}, column {column}; response body omitted"
+            "LLM response JSON parse failed ({kind}) at line {line}, column {column}; response body omitted"
         )
     }
 

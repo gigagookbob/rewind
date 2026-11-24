@@ -32,7 +32,7 @@ fn get_slack_prompt(lang: &Lang) -> &'static str {
 }
 
 /// LLM provider enum. Adding a new variant triggers compile errors at unhandled match arms.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub enum ProviderKind {
     Anthropic,
     OpenAi,
@@ -53,6 +53,21 @@ pub(super) enum OutboundRequest {
 }
 
 impl LlmProvider {
+    /// No credentials enter checkpoint identity or files.
+    pub(super) fn cache_identity(&self, lang: &Lang) -> serde_json::Value {
+        serde_json::json!({
+            "kind": self.kind,
+            "anthropic_model": super::anthropic::MODEL,
+            "anthropic_output_schema": super::anthropic::analysis_output_schema(),
+            "openai_model": super::openai::MODEL,
+            "redactor": self.redactor_enabled,
+            "workspace": self.anthropic_workspace_id,
+            "lang": lang,
+            "system": get_system_prompt(lang),
+            "chunk_system": super::summarizer::get_chunk_summarize_prompt(lang),
+        })
+    }
+
     pub fn new(kind: ProviderKind, redactor_enabled: bool) -> Self {
         Self {
             kind,
@@ -174,6 +189,7 @@ impl LlmProvider {
                 &system,
                 &text,
                 max_tokens,
+                json_output,
             )?),
             ProviderKind::OpenAi => OutboundRequest::OpenAi(super::openai::build_request(
                 api_key,
