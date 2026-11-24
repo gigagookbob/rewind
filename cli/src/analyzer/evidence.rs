@@ -1024,6 +1024,7 @@ mod tests {
             date: "2026-10-31".into(),
             source_fingerprints: Default::default(),
             timezone_window_key: None,
+            settings: None,
             sources: vec![("Codex".into(), result)],
             day_summary: None,
         };

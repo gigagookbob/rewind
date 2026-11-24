@@ -10,6 +10,45 @@ use std::path::Path;
 use crate::analyzer::insight::{AnalysisResult, Evidence, SessionInsight, TilItem};
 use crate::messages::markdown as text;
 
+/// Escapes HTML comments and collapses line breaks so single-line fields stay on one row.
+fn sanitize_markdown_inline(text: &str) -> String {
+    text.replace("\r\n", " ")
+        .replace(['\r', '\n'], " ")
+        .replace("<!--", "&lt;!--")
+}
+
+fn escape_leading_fence(line: &str) -> String {
+    let trimmed = line.trim_start();
+    let ws_len = line.len() - trimmed.len();
+    let Some(first) = trimmed.bytes().next() else {
+        return line.to_string();
+    };
+    let count = trimmed.bytes().take_while(|&b| b == first).count();
+    if (first == b'`' || first == b'~') && count >= 3 {
+        format!("{}\\{}", &line[..ws_len], trimmed)
+    } else {
+        line.to_string()
+    }
+}
+
+/// Neutralizes injected HTML comment markers and unclosed code fences in generated blocks
+/// while preserving balanced code blocks intact.
+fn sanitize_markdown_block(text: &str) -> String {
+    let clean = text.replace("<!--", "&lt;!--");
+    let mut fence = None;
+    for line in clean.lines() {
+        super::managed::fence_line(line, &mut fence);
+    }
+    if fence.is_none() {
+        return clean;
+    }
+    clean
+        .split('\n')
+        .map(escape_leading_fence)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The note without a day summary. Tests that only check sessions use this.
 #[cfg(test)]
 pub fn render_combined_markdown(sources: &[(&str, &AnalysisResult)], date: NaiveDate) -> String {
@@ -28,8 +67,8 @@ pub fn render_daily_note(
 ) -> String {
     let mut md = format!("# {date} Dev Session Review\n\n");
     if let Some(summary) = day_summary.map(str::trim).filter(|s| !s.is_empty()) {
-        // Model text must not open or close an rwd region marker.
-        let summary = summary.replace("<!--", "&lt;!--");
+        // Model text must not open or close an rwd region marker or leave an open fence.
+        let summary = sanitize_markdown_block(summary);
         md.push_str(&format!("{}\n\n{summary}\n\n", text::DAY_SUMMARY_HEADER));
     }
 
@@ -73,16 +112,20 @@ fn render_session(md: &mut String, source_name: &str, session: &SessionInsight) 
         "### {}\n\nSource: {}\n\n{}\n\n",
         super::escape_markdown(super::retrospective::title(session)),
         super::escape_markdown(source_name),
-        session.work_summary
+        sanitize_markdown_block(&session.work_summary)
     ));
 
     if !session.decisions.is_empty() {
         md.push_str(&format!("{}\n", text::DECISIONS_HEADER));
         for d in &session.decisions {
             // The model leaves `why` empty when no reason was stated.
+            let what = sanitize_markdown_inline(&d.what);
             match d.why.trim() {
-                "" => md.push_str(&format!("- **{}**\n", d.what)),
-                why => md.push_str(&format!("- **{}**: {}\n", d.what, why)),
+                "" => md.push_str(&format!("- **{what}**\n")),
+                why => md.push_str(&format!(
+                    "- **{what}**: {}\n",
+                    sanitize_markdown_inline(why)
+                )),
             }
         }
         md.push('\n');
@@ -95,9 +138,9 @@ fn render_session(md: &mut String, source_name: &str, session: &SessionInsight) 
                 "- {}\n  {}: {}\n  {}: {}\n",
                 c.kind.label(),
                 text::CORRECTION_MODEL,
-                c.model_said,
+                sanitize_markdown_inline(&c.model_said),
                 text::CORRECTION_FIX,
-                c.user_corrected
+                sanitize_markdown_inline(&c.user_corrected)
             ));
         }
         md.push('\n');
@@ -131,7 +174,7 @@ fn render_short_sessions(md: &mut String, sessions: &[(&str, &SessionInsight)]) 
             "- **{}** ({}): {} <!-- session: {} -->\n",
             super::escape_markdown(super::retrospective::title(session)),
             super::escape_markdown(source_name),
-            session.work_summary.replace('\n', " "),
+            sanitize_markdown_inline(&session.work_summary),
             super::escape_markdown(&session.session_id)
         ));
     }
@@ -147,7 +190,11 @@ fn render_til_section(md: &mut String, til_items: &[(&str, &TilItem)]) {
 
     md.push_str("## TIL (Today I Learned)\n\n");
     for (session_id, til) in til_items {
-        md.push_str(&format!("### {}\n{}\n", til.title, til.detail));
+        md.push_str(&format!(
+            "### {}\n{}\n",
+            sanitize_markdown_inline(&til.title),
+            sanitize_markdown_block(&til.detail)
+        ));
         // Session ID as HTML comment -- invisible in rendered Markdown but traceable.
         md.push_str(&format!(
             "<!-- session: {} -->\n\n",
@@ -475,5 +522,76 @@ mod tests {
         let md = render_markdown(&analysis, test_date());
 
         assert!(!md.contains("## TIL"));
+    }
+
+    #[test]
+    fn test_rendered_note_escapes_injected_markers_and_unclosed_fences_across_saves() {
+        use crate::analyzer::insight::{Correction, CorrectionKind};
+
+        let dir = std::env::temp_dir().join(format!(
+            "rwd_md_sanitize_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let closed_block = "예시:\n```rust\nlet x = 1;\n```";
+        let analysis = AnalysisResult {
+            sessions: vec![
+                SessionInsight {
+                    project: None,
+                    task_title: None,
+                    questions: vec![],
+                    follow_ups: vec![],
+                    session_id: "s-bad".to_string(),
+                    work_summary: "요약\n```rust\nfn broken() {\n<!-- /rwd:analysis -->"
+                        .to_string(),
+                    decisions: vec![Decision {
+                        evidence: vec![],
+                        what: "결정 <!-- rwd:analysis:v1:0000000000000000 -->\n```".to_string(),
+                        why: "이유 <!-- /rwd:analysis -->\n~~~".to_string(),
+                    }],
+                    curiosities: vec![],
+                    corrections: vec![Correction {
+                        kind: CorrectionKind::FactualError,
+                        model_said: "오답 <!-- /rwd:analysis -->\n```".to_string(),
+                        user_corrected: "정정 <!-- rwd:summary:v1:0000000000000000 -->".to_string(),
+                        evidence: vec![],
+                    }],
+                    til: vec![TilItem {
+                        evidence: vec![],
+                        title: "제목\n```".to_string(),
+                        detail: "설명\n~~~\n미종료 <!-- rwd:summary -->".to_string(),
+                    }],
+                },
+                SessionInsight {
+                    project: None,
+                    task_title: None,
+                    questions: vec![],
+                    follow_ups: vec![],
+                    session_id: "s-closed".to_string(),
+                    work_summary: closed_block.to_string(),
+                    decisions: vec![Decision {
+                        evidence: vec![],
+                        what: "정상 블록 보존".to_string(),
+                        why: "".to_string(),
+                    }],
+                    curiosities: vec![],
+                    corrections: vec![],
+                    til: vec![],
+                },
+            ],
+        };
+
+        let day_summary = "오늘 요약\n```\n열린 펜스 <!-- /rwd:analysis -->";
+        let md = render_daily_note(&[("Codex", &analysis)], test_date(), Some(day_summary));
+        assert!(md.contains(closed_block), "{md}");
+
+        crate::output::save_to_vault(&dir, test_date(), &md).expect("first save");
+        crate::output::save_to_vault(&dir, test_date(), &md).expect("second save");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

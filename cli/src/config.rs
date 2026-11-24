@@ -17,7 +17,7 @@ use std::path::PathBuf;
 pub type ConfigError = Box<dyn std::error::Error>;
 
 /// Supported languages for LLM output.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Lang {
     En,
@@ -258,14 +258,54 @@ pub fn load_config(path: &std::path::Path) -> Result<Config, ConfigError> {
     Ok(config)
 }
 
-/// Loads config if the file exists; returns None otherwise.
-pub fn load_config_if_exists() -> Option<Config> {
-    let path = config_path().ok()?;
-    if path.exists() {
-        load_config(&path).ok()
-    } else {
-        None
+/// Loads the required config file, distinguishing missing files from TOML parse errors.
+pub fn load_required_config() -> Result<Config, ConfigError> {
+    let path = config_path()?;
+    load_required_config_from(&path)
+}
+
+pub(crate) fn load_required_config_from(path: &std::path::Path) -> Result<Config, ConfigError> {
+    load_optional_config_from(path)?.ok_or_else(|| crate::messages::error::NO_CONFIG.into())
+}
+
+/// Loads the config file when present. Returns `Ok(None)` only when the file does not exist;
+/// malformed or unreadable configs return an error without echoing file contents or secrets.
+pub fn load_optional_config() -> Result<Option<Config>, ConfigError> {
+    let path = config_path()?;
+    load_optional_config_from(&path)
+}
+
+pub(crate) fn load_optional_config_from(
+    path: &std::path::Path,
+) -> Result<Option<Config>, ConfigError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(crate::messages::error::config_parse_failed(&path.display()).into()),
     }
+    load_config(path)
+        .map(Some)
+        .map_err(|_| crate::messages::error::config_parse_failed(&path.display()).into())
+}
+
+/// Expands a leading `~` or `~/` (or `~\`) to `home` when available.
+pub(crate) fn expand_tilde_with_home(path: &str, home: Option<&std::path::Path>) -> PathBuf {
+    let Some(home) = home else {
+        return PathBuf::from(path);
+    };
+    if path == "~" {
+        return home.to_path_buf();
+    }
+    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+        return home.join(rest);
+    }
+    PathBuf::from(path)
+}
+
+/// Expands a leading `~` to the current user's home directory.
+pub fn expand_tilde(path: &str) -> PathBuf {
+    let home = dirs::home_dir();
+    expand_tilde_with_home(path, home.as_deref())
 }
 
 /// Resolves `${VAR}` placeholders in `template` from process environment.
@@ -734,5 +774,62 @@ path = "/tmp/vault"
             resolve_env_placeholders("${OPEN_AI_KEY").expect("literal"),
             "${OPEN_AI_KEY"
         );
+    }
+
+    #[test]
+    fn test_expand_tilde_with_home_expands_user_home_only() {
+        let home = std::path::Path::new("/Users/tester");
+        assert_eq!(expand_tilde_with_home("~", Some(home)), home);
+        assert_eq!(
+            expand_tilde_with_home("~/vault", Some(home)),
+            home.join("vault")
+        );
+        assert_eq!(
+            expand_tilde_with_home("~\\vault", Some(home)),
+            home.join("vault")
+        );
+        assert_eq!(
+            expand_tilde_with_home("~other/vault", Some(home)),
+            PathBuf::from("~other/vault")
+        );
+        assert_eq!(
+            expand_tilde_with_home("/abs/path", Some(home)),
+            PathBuf::from("/abs/path")
+        );
+        assert_eq!(
+            expand_tilde_with_home("~/vault", None),
+            PathBuf::from("~/vault")
+        );
+    }
+
+    #[test]
+    fn test_load_config_distinguishes_missing_from_malformed_without_leaking_secrets() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("rwd_test_config_errors_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).expect("create dir");
+        let missing = temp_dir.join("missing.toml");
+        assert!(
+            load_optional_config_from(&missing)
+                .expect("missing is ok")
+                .is_none()
+        );
+        let missing_err = load_required_config_from(&missing).unwrap_err().to_string();
+        assert_eq!(missing_err, crate::messages::error::NO_CONFIG);
+
+        let broken = temp_dir.join("broken.toml");
+        std::fs::write(
+            &broken,
+            "[llm]\nprovider = \"anthropic\"\nanthropic_api_key = \"sk-ant-secret-unterminated\n",
+        )
+        .expect("write broken");
+        let opt_err = load_optional_config_from(&broken).unwrap_err().to_string();
+        let req_err = load_required_config_from(&broken).unwrap_err().to_string();
+        assert_ne!(opt_err, crate::messages::error::NO_CONFIG);
+        assert_eq!(opt_err, req_err);
+        assert!(opt_err.contains("broken.toml"));
+        assert!(!opt_err.contains("sk-ant-secret-unterminated"));
+
+        std::fs::remove_dir_all(&temp_dir).ok();
     }
 }

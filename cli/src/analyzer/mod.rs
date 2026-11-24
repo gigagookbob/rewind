@@ -290,7 +290,7 @@ pub async fn analyze_session_tasks(
     let plan = planner::build_execution_plan(
         &context.rate_limits,
         &estimates,
-        context.provider.max_output_tokens(),
+        context.provider.max_input_tokens(),
     );
 
     // 3. Display plan

@@ -101,9 +101,11 @@ Examples:
   rwd config api-key sk-...         Set API key for current provider (openai/anthropic)
   rwd config openai-api-key sk-...  Set OpenAI API key
   rwd config anthropic-api-key ...  Set Anthropic API key
-  rwd config claude-include-automated true  Include automated Claude sessions by default")]
+  rwd config claude-include-automated true  Include automated Claude sessions by default
+  rwd config redactor off           Disable sensitive data masking
+  rwd config lang ko                Set output language (en/ko)")]
     Config {
-        /// Config key (output-path, provider, api-key, openai-api-key, anthropic-api-key, claude-include-automated)
+        /// Config key (output-path, provider, api-key, openai-api-key, anthropic-api-key, anthropic-workspace-id, claude-include-automated, redactor, lang)
         key: Option<String>,
         /// Value to set
         value: Option<String>,

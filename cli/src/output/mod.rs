@@ -19,9 +19,9 @@ use chrono::NaiveDate;
 
 /// Loads the Obsidian vault path from config (~/.config/rwd/config.toml).
 pub fn load_vault_path() -> Result<PathBuf, OutputError> {
-    let config = crate::config::load_config_if_exists().ok_or(crate::messages::error::NO_CONFIG)?;
+    let config = crate::config::load_required_config()?;
 
-    let path = PathBuf::from(&config.output.path);
+    let path = crate::config::expand_tilde(&config.output.path);
     if !path.exists() {
         std::fs::create_dir_all(&path)?;
     }

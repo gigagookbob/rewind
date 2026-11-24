@@ -57,23 +57,23 @@ pub struct ExecutionPlan {
 /// Builds an execution plan from rate limits and per-session estimates.
 ///
 /// Strategy branches:
-/// - individual session <= ITPM -> Direct
-/// - individual session > ITPM -> Summarize (chunk and summarize)
+/// - individual session <= min(ITPM, model_max_input) -> Direct
+/// - individual session > min(ITPM, model_max_input) -> Summarize (chunk and summarize)
 pub fn build_execution_plan(
     limits: &RateLimits,
     estimates: &[SessionEstimate],
-    _model_max_output: u64,
+    model_max_input: u64,
 ) -> ExecutionPlan {
-    let safe_itpm = limits.input_tokens_per_minute.max(1);
+    let safe_budget = limits.input_tokens_per_minute.min(model_max_input).max(1);
     let total: u64 = estimates.iter().map(|e| e.estimated_tokens).sum();
 
     let steps: Vec<ExecutionStep> = estimates
         .iter()
         .map(|est| {
-            let strategy = if est.estimated_tokens <= safe_itpm {
+            let strategy = if est.estimated_tokens <= safe_budget {
                 StepStrategy::Direct
             } else {
-                let chunks = ((est.estimated_tokens as f64) / (safe_itpm as f64)).ceil() as usize;
+                let chunks = ((est.estimated_tokens as f64) / (safe_budget as f64)).ceil() as usize;
                 StepStrategy::Summarize {
                     chunks: chunks.max(2),
                 }
@@ -122,7 +122,7 @@ mod tests {
                 estimated_tokens: 20_000,
             },
         ];
-        let plan = build_execution_plan(&limits, &estimates, 32_000);
+        let plan = build_execution_plan(&limits, &estimates, 160_000);
         assert_eq!(plan.steps.len(), 2);
         assert_eq!(plan.steps[0].strategy, StepStrategy::Direct);
         assert_eq!(plan.steps[1].strategy, StepStrategy::Direct);
@@ -139,7 +139,7 @@ mod tests {
             session_id: "s1".into(),
             estimated_tokens: 50_000,
         }];
-        let plan = build_execution_plan(&limits, &estimates, 32_000);
+        let plan = build_execution_plan(&limits, &estimates, 160_000);
         assert_eq!(plan.steps.len(), 1);
         assert_eq!(
             plan.steps[0].strategy,
@@ -160,7 +160,21 @@ mod tests {
                 estimated_tokens: 7_000,
             },
         ];
-        let plan = build_execution_plan(&limits, &estimates, 32_000);
+        let plan = build_execution_plan(&limits, &estimates, 160_000);
         assert_eq!(plan.total_estimated_tokens, 12_000);
+    }
+
+    #[test]
+    fn test_build_plan_summarizes_when_session_exceeds_model_context_despite_high_itpm() {
+        let limits = RateLimits::default_generous();
+        let estimates = vec![SessionEstimate {
+            session_id: "large".into(),
+            estimated_tokens: 120_000,
+        }];
+        let plan = build_execution_plan(&limits, &estimates, 100_000);
+        assert_eq!(
+            plan.steps[0].strategy,
+            StepStrategy::Summarize { chunks: 2 }
+        );
     }
 }

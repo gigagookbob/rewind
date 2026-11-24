@@ -380,17 +380,34 @@ fn extract_codex_output_text(payload: &serde_json::Value) -> String {
 /// Returns all existing Codex session roots in priority order.
 /// Priority: config overrides -> CODEX_HOME -> native home -> WSL Windows homes.
 pub fn discover_codex_session_roots(config_roots: Option<&[String]>) -> Vec<PathBuf> {
+    let home = dirs::home_dir();
+    discover_codex_session_roots_with_home(
+        config_roots,
+        home.as_deref(),
+        std::env::var_os("CODEX_HOME").map(PathBuf::from).as_deref(),
+    )
+}
+
+fn discover_codex_session_roots_with_home(
+    config_roots: Option<&[String]>,
+    home: Option<&Path>,
+    codex_home: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     if let Some(roots) = config_roots {
-        candidates.extend(roots.iter().map(PathBuf::from));
+        candidates.extend(
+            roots
+                .iter()
+                .map(|r| crate::config::expand_tilde_with_home(r, home)),
+        );
     }
 
-    if let Some(codex_home) = std::env::var_os("CODEX_HOME") {
-        candidates.push(PathBuf::from(codex_home).join("sessions"));
+    if let Some(codex_home) = codex_home {
+        candidates.push(codex_home.join("sessions"));
     }
 
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = home {
         candidates.push(home.join(".codex").join("sessions"));
     }
 
@@ -1508,5 +1525,19 @@ mod tests {
         assert!(entries.iter().any(
             |entry| matches!(entry, CodexEntry::UserMessage { text, .. } if text == "다음 작업")
         ));
+    }
+
+    #[test]
+    fn test_discover_codex_session_roots_expands_tilde_in_config_roots() {
+        let base = std::env::temp_dir().join(format!("rwd_tilde_codex_{}", std::process::id()));
+        let custom = base.join("custom-codex");
+        std::fs::create_dir_all(&custom).expect("create custom root");
+        let roots = discover_codex_session_roots_with_home(
+            Some(&["~/custom-codex".to_string()]),
+            Some(&base),
+            None,
+        );
+        std::fs::remove_dir_all(&base).ok();
+        assert_eq!(roots, vec![custom]);
     }
 }
