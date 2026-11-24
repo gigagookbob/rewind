@@ -116,6 +116,7 @@ pub(super) async fn execute_plan_parallel(
     api_key: &str,
     verbose: bool,
     lang: &crate::config::Lang,
+    cache: &super::session_cache::SessionCache,
 ) -> Result<(AnalysisResult, RedactResult), AnalyzerError> {
     if plan.steps.is_empty() {
         return Err(crate::messages::error::NO_SESSIONS.into());
@@ -159,15 +160,6 @@ pub(super) async fn execute_plan_parallel(
     let mut inflight = FuturesUnordered::new();
 
     for planned in planned_tasks {
-        eprintln!(
-            "{}",
-            crate::messages::status::step_analyzing(
-                planned.step_number,
-                planned.total_steps,
-                &planned.task.session_id,
-            )
-        );
-
         let semaphore = Arc::clone(&semaphore);
         let limits = Arc::clone(&rate_limits);
 
@@ -176,7 +168,7 @@ pub(super) async fn execute_plan_parallel(
                 .acquire_owned()
                 .await
                 .map_err(|e| format!("Failed to acquire semaphore permit: {e}"))?;
-            run_planned_task(planned, provider, api_key, &limits, lang).await
+            run_cached_task(planned, provider, api_key, &limits, lang, cache).await
         });
     }
 
@@ -195,9 +187,17 @@ where
 {
     let mut ordered: Vec<Option<PlannedSessionOutcome>> =
         std::iter::repeat_with(|| None).take(total_steps).collect();
+    let mut first_error = None;
 
     while let Some(outcome_result) = inflight.next().await {
-        let outcome = outcome_result?;
+        let outcome = match outcome_result {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                eprintln!("Session analysis failed: {error}");
+                first_error.get_or_insert(error);
+                continue;
+            }
+        };
 
         if verbose {
             eprintln!(
@@ -222,7 +222,13 @@ where
         ordered[outcome_index] = Some(outcome);
     }
 
-    Ok(ordered)
+    match first_error {
+        Some(error) => Err(format!(
+            "{error}; rerun to reuse saved sessions and retry unfinished analyses"
+        )
+        .into()),
+        None => Ok(ordered),
+    }
 }
 
 fn merge_ordered_outcomes(
@@ -310,6 +316,57 @@ async fn run_planned_task(
         analysis,
         redact,
     })
+}
+
+async fn run_cached_task(
+    planned: PlannedSessionTask,
+    provider: &provider::LlmProvider,
+    api_key: &str,
+    limits: &planner::RateLimits,
+    lang: &crate::config::Lang,
+    cache: &super::session_cache::SessionCache,
+) -> Result<PlannedSessionOutcome, AnalyzerError> {
+    let key = cache.key(&planned.task, provider, lang)?;
+    if let Some(analysis) = cache.load(&key).filter(|result| {
+        result
+            .sessions
+            .iter()
+            .all(|s| s.session_id == planned.task.session_id)
+    }) {
+        eprintln!(
+            "[{}/{}] Reusing saved analysis for {}",
+            planned.step_number, planned.total_steps, planned.task.session_id
+        );
+        let (_, redact) = prepare_session(&planned.task, provider.redactor_enabled());
+        return Ok(PlannedSessionOutcome {
+            index: planned.index,
+            step_number: planned.step_number,
+            total_steps: planned.total_steps,
+            session_id: planned.task.session_id,
+            elapsed_secs: 0.0,
+            usage: ApiUsage::default(),
+            analysis,
+            redact,
+        });
+    }
+    eprintln!(
+        "{}",
+        crate::messages::status::step_analyzing(
+            planned.step_number,
+            planned.total_steps,
+            &planned.task.session_id,
+        )
+    );
+    let session_id = planned.task.session_id.clone();
+    let outcome = run_planned_task(planned, provider, api_key, limits, lang)
+        .await
+        .map_err(|error| format!("Session {session_id}: {error}"))?;
+    if let Err(error) = cache.save(&key, &outcome.analysis) {
+        eprintln!(
+            "Session {session_id} checkpoint save failed: {error}; this session will need re-analysis"
+        );
+    }
+    Ok(outcome)
 }
 
 /// Instruction prepended to the conversation on JSON-parse retry.
@@ -430,22 +487,53 @@ async fn analyze_prompt(
     lang: &crate::config::Lang,
     limits: &planner::RateLimits,
 ) -> Result<(AnalysisResult, ApiUsage), AnalyzerError> {
-    let (raw_response, usage) = provider
-        .call_analysis_api(
-            api_key,
-            &prompt,
-            4_096,
-            lang,
-            limits.input_tokens_per_minute,
-        )
-        .await?;
-    let result = insight::parse_response(&raw_response)?;
-    Ok((result, usage))
+    let cap = u32::try_from(provider.max_output_tokens())?;
+    let mut max_tokens = 4_096.min(cap);
+    let mut total_usage = ApiUsage::default();
+    loop {
+        match provider
+            .call_analysis_api(
+                api_key,
+                &prompt,
+                max_tokens,
+                lang,
+                limits.input_tokens_per_minute,
+            )
+            .await
+        {
+            Ok((raw_response, usage)) => {
+                total_usage.input_tokens += usage.input_tokens;
+                total_usage.output_tokens += usage.output_tokens;
+                return Ok((insight::parse_response(&raw_response)?, total_usage));
+            }
+            Err(error) => {
+                let Some(truncated) = error.downcast_ref::<super::OutputTruncated>() else {
+                    return Err(error);
+                };
+                if max_tokens >= cap {
+                    return Err(error);
+                }
+                total_usage.input_tokens += truncated.usage.input_tokens;
+                total_usage.output_tokens += truncated.usage.output_tokens;
+                let next = max_tokens.saturating_mul(2).min(cap);
+                eprintln!("LLM output truncated; retrying with max_tokens {max_tokens} -> {next}");
+                max_tokens = next;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 #[path = "executor_redaction_tests.rs"]
 mod redaction_tests;
+
+#[cfg(test)]
+#[path = "executor_retry_tests.rs"]
+mod retry_tests;
+
+#[cfg(test)]
+#[path = "executor_checkpoint_tests.rs"]
+mod checkpoint_tests;
 
 #[cfg(test)]
 mod tests {
@@ -580,6 +668,10 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.to_string().contains("boom"));
+        assert!(
+            inflight.next().await.is_none(),
+            "other sessions must finish after a failure"
+        );
     }
 
     #[tokio::test]

@@ -1643,10 +1643,12 @@ dependencies = [
  "notify-rust",
  "regex",
  "reqwest",
+ "ring",
  "rpassword",
  "semver",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "toml",
 ]

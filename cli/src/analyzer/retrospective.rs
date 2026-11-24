@@ -1,22 +1,24 @@
 //! Project identity and conversation-backed retrospective state.
 
-use super::insight::Evidence;
+use super::insight::{Evidence, string_or_stringify, vec_or_default};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskTitle {
+    #[serde(default, deserialize_with = "string_or_stringify")]
     pub text: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub evidence: Vec<Evidence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Question {
+    #[serde(default, deserialize_with = "string_or_stringify")]
     pub question: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub evidence: Vec<Evidence>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub updates: Vec<QuestionUpdate>,
 }
 
@@ -24,8 +26,9 @@ pub struct Question {
 pub struct QuestionUpdate {
     #[serde(default)]
     pub kind: QuestionUpdateKind,
+    #[serde(default, deserialize_with = "string_or_stringify")]
     pub detail: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub evidence: Vec<Evidence>,
 }
 
@@ -42,12 +45,13 @@ pub enum QuestionUpdateKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FollowUp {
+    #[serde(default, deserialize_with = "string_or_stringify")]
     pub task: String,
     #[serde(default)]
     pub origin: FollowUpOrigin,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub evidence: Vec<Evidence>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub updates: Vec<FollowUpUpdate>,
 }
 
@@ -65,8 +69,9 @@ pub enum FollowUpOrigin {
 pub struct FollowUpUpdate {
     #[serde(default)]
     pub kind: FollowUpUpdateKind,
+    #[serde(default, deserialize_with = "string_or_stringify")]
     pub detail: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vec_or_default")]
     pub evidence: Vec<Evidence>,
 }
 

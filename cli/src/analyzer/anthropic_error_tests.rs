@@ -33,6 +33,27 @@ async fn failure(status: u16, body: &str) -> String {
 }
 
 #[tokio::test]
+async fn test_truncated_success_response_is_rejected_without_exposing_text() {
+    let body = r#"{"content":[{"type":"text","text":"private unfinished response"}],"stop_reason":"max_tokens","usage":{"input_tokens":10,"output_tokens":4096}}"#;
+    let error = failure(200, body).await;
+    assert!(error.contains("max_tokens"), "{error}");
+    assert!(error.contains("4096"), "{error}");
+    assert!(!error.contains("private unfinished response"));
+}
+
+#[tokio::test]
+async fn test_complete_success_response_keeps_text_and_usage() {
+    let (request, server) = serve(
+        200,
+        r#"{"content":[{"type":"text","text":"complete"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}}"#,
+    );
+    let (text, usage) = super::send_request(request).await.unwrap();
+    server.join().unwrap();
+    assert_eq!(text, "complete");
+    assert_eq!(usage.output_tokens, 20);
+}
+
+#[tokio::test]
 async fn test_probe_stops_on_configuration_errors_but_keeps_transient_fallback() {
     for status in [400, 401, 403, 404, 429, 500, 529, 200] {
         let (request, server) = serve(

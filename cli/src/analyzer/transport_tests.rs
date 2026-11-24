@@ -13,6 +13,7 @@ pub(super) struct Recording(Arc<Mutex<Recorded>>);
 struct Recorded {
     requests: Vec<OutboundRequest>,
     responses: VecDeque<Result<String, String>>,
+    anthropic_responses: VecDeque<String>,
 }
 
 impl Recording {
@@ -22,6 +23,9 @@ impl Recording {
     ) -> Result<(String, ApiUsage), AnalyzerError> {
         let mut state = self.0.lock().unwrap();
         state.requests.push(request);
+        if let Some(raw) = state.anthropic_responses.pop_front() {
+            return super::anthropic::decode_test_response(&raw);
+        }
         state
             .responses
             .pop_front()
@@ -42,6 +46,10 @@ impl Recording {
                 }
             })
             .collect()
+    }
+
+    pub(super) fn set_anthropic_responses(&self, responses: Vec<String>) {
+        self.0.lock().unwrap().anthropic_responses = responses.into();
     }
 }
 
@@ -260,4 +268,39 @@ fn test_removed_codex_provider_config_is_rejected_with_guidance() {
         .to_string();
     assert_eq!(error, crate::messages::error::CODEX_PROVIDER_REMOVED);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_anthropic_analysis_request_sets_json_schema_and_text_requests_omit_it() {
+    let (provider, recorded) = fake_provider(
+        ProviderKind::Anthropic,
+        true,
+        vec![Ok("{}".into()), Ok("day".into()), Ok("slack".into())],
+    );
+    provider
+        .call_analysis_api("auth", "hello", 128, &Lang::Ko, 100_000)
+        .await
+        .unwrap();
+    provider
+        .call_day_summary_api("auth", "hello", &Lang::Ko)
+        .await
+        .unwrap();
+    provider
+        .call_slack_api("auth", "hello", &Lang::Ko)
+        .await
+        .unwrap();
+
+    let payloads: Vec<serde_json::Value> = recorded
+        .payloads()
+        .into_iter()
+        .map(|p| serde_json::from_str(&p).unwrap())
+        .collect();
+    assert_eq!(payloads.len(), 3);
+
+    let format = &payloads[0]["output_config"]["format"];
+    assert_eq!(format["type"], "json_schema");
+    assert!(format["schema"]["$defs"]["evidence"].is_object());
+    assert_eq!(format["schema"]["additionalProperties"], false);
+    assert!(payloads[1].get("output_config").is_none());
+    assert!(payloads[2].get("output_config").is_none());
 }

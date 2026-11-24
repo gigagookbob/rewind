@@ -4,7 +4,7 @@ use super::planner::RateLimits;
 use serde::{Deserialize, Serialize};
 
 const API_URL: &str = "https://api.openai.com/v1/chat/completions";
-const MODEL: &str = "gpt-4o";
+pub(super) const MODEL: &str = "gpt-4o";
 
 /// OpenAI Chat Completions request body.
 #[derive(Serialize)]
