@@ -457,7 +457,10 @@ fn check_analysis_input(
     limits: &planner::RateLimits,
     lang: &crate::config::Lang,
 ) -> Result<(), AnalyzerError> {
-    provider.check_analysis_input(text, limits.input_tokens_per_minute, lang)
+    let budget = limits
+        .input_tokens_per_minute
+        .min(provider.max_input_tokens());
+    provider.check_analysis_input(text, budget, lang)
 }
 
 /// Splits a large session into chunks and returns the combined chunk summaries.
@@ -497,7 +500,9 @@ async fn analyze_prompt(
                 &prompt,
                 max_tokens,
                 lang,
-                limits.input_tokens_per_minute,
+                limits
+                    .input_tokens_per_minute
+                    .min(provider.max_input_tokens()),
             )
             .await
         {
@@ -610,6 +615,18 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn test_check_analysis_input_respects_provider_max_input_tokens() {
+        let openai = provider::LlmProvider::new(provider::ProviderKind::OpenAi, true);
+        let anthropic = provider::LlmProvider::new(provider::ProviderKind::Anthropic, true);
+        let generous = planner::RateLimits::default_generous();
+        let text = "a".repeat(210_000);
+        assert!(check_analysis_input(&text, &openai, &generous, &crate::config::Lang::Ko).is_err());
+        assert!(
+            check_analysis_input(&text, &anthropic, &generous, &crate::config::Lang::Ko).is_ok()
+        );
     }
 
     fn sample_outcome(index: usize, session_id: &str) -> PlannedSessionOutcome {

@@ -34,7 +34,7 @@ fn conflict() -> OutputError {
 
 /// Fenced examples are never ownership declarations. Recognize longer fences
 /// and both fence characters, including indented examples conservatively.
-fn fence_line(line: &str, fence: &mut Option<(u8, usize)>) -> bool {
+pub(super) fn fence_line(line: &str, fence: &mut Option<(u8, usize)>) -> bool {
     let text = line.trim_start();
     let Some(first) = text.bytes().next() else {
         return fence.is_some();
@@ -90,6 +90,53 @@ pub(super) fn update(existing: &str, section: Section, body: &str) -> Result<Str
     Ok(updated)
 }
 
+/// Replaces matched inline backtick code spans with spaces so example markers
+/// inside user prose (e.g. `` `<!-- rwd:analysis -->` ``) do not trigger conflict checks.
+/// Unclosed backticks remain verbatim and still fail safely.
+fn strip_inline_code(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let mut out = String::with_capacity(line.len());
+    let mut i = 0;
+    let mut copied_until = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let mut ticks = 0;
+        while i + ticks < bytes.len() && bytes[i + ticks] == b'`' {
+            ticks += 1;
+        }
+        let mut j = i + ticks;
+        let mut closed_at = None;
+        while j < bytes.len() {
+            if bytes[j] != b'`' {
+                j += 1;
+                continue;
+            }
+            let mut close_ticks = 0;
+            while j + close_ticks < bytes.len() && bytes[j + close_ticks] == b'`' {
+                close_ticks += 1;
+            }
+            if close_ticks == ticks {
+                closed_at = Some(j + close_ticks);
+                break;
+            }
+            j += close_ticks;
+        }
+        if let Some(end) = closed_at {
+            out.push_str(&line[copied_until..i]);
+            out.push(' ');
+            i = end;
+            copied_until = end;
+        } else {
+            i += ticks;
+        }
+    }
+    out.push_str(&line[copied_until..]);
+    out
+}
+
 fn regions(text: &str) -> Result<Vec<(Section, Range<usize>)>, OutputError> {
     let mut found = Vec::new();
     let mut opened: Option<(Section, usize, usize, String)> = None;
@@ -102,7 +149,8 @@ fn regions(text: &str) -> Result<Vec<(Section, Range<usize>)>, OutputError> {
         if fence_line(line, &mut fence) {
             continue;
         }
-        if !line.contains("<!-- rwd:") && !line.contains("<!-- /rwd:") {
+        let unquoted = strip_inline_code(line);
+        if !unquoted.contains("<!-- rwd:") && !unquoted.contains("<!-- /rwd:") {
             continue;
         }
         let mut recognized = false;
@@ -239,5 +287,18 @@ mod tests {
         let twice = update(&once, Section::Analysis, "new").unwrap();
         assert!(twice.starts_with(note));
         assert_eq!(update(&twice, Section::Analysis, "new").unwrap(), twice);
+    }
+
+    #[test]
+    fn test_inline_backtick_markers_in_user_note_are_ignored() {
+        let note = "메모: `<!-- rwd:analysis -->` 및 ``<!-- /rwd:summary -->`` 예시\n";
+        let once = update(note, Section::Analysis, "body").unwrap();
+        let twice = update(&once, Section::Analysis, "updated").unwrap();
+        assert!(twice.starts_with(note));
+        assert!(twice.contains("updated\n"));
+        assert!(!twice.contains("\nbody\n"));
+
+        let unclosed_tick = "미완성 `<!-- rwd:broken -->\n";
+        assert!(update(unclosed_tick, Section::Analysis, "body").is_err());
     }
 }

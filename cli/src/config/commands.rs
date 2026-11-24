@@ -8,7 +8,6 @@ use super::{
     ClaudeInputConfig, Config, ConfigError, InputConfig, Lang, LlmConfig, OutputConfig,
     config_path, load_config, parse_bool_toggle, save_config,
 };
-use std::path::PathBuf;
 
 /// `rwd init` — prompts for API key, detects output path, and saves config.
 pub(crate) fn run_init() -> Result<(), ConfigError> {
@@ -45,11 +44,7 @@ pub(crate) fn run_init() -> Result<(), ConfigError> {
     }
 
     // Show masked key (first 8 chars + ***)
-    let masked = if entered_api_key.len() > 8 {
-        format!("{}***", &entered_api_key[..8])
-    } else {
-        "***".to_string()
-    };
+    let masked = mask_api_key(&entered_api_key);
     eprintln!("{}", crate::messages::init::api_key_set(&masked));
 
     // Output path — suggest detected vault path as default
@@ -64,7 +59,7 @@ pub(crate) fn run_init() -> Result<(), ConfigError> {
     let output_path = if path_input.is_empty() {
         default_path
     } else {
-        PathBuf::from(path_input)
+        super::expand_tilde(path_input)
     };
     eprintln!(
         "{}",
@@ -204,6 +199,11 @@ pub(crate) fn run_config(key: &str, value: &str) -> Result<(), ConfigError> {
                 "{}",
                 crate::messages::config::claude_include_automated_changed(enabled)
             );
+        }
+        "redactor" => {
+            let enabled = parse_bool_toggle(value, "redactor")?;
+            config.redactor = Some(super::RedactorConfig { enabled });
+            eprintln!("{}", crate::messages::config::redactor_changed(enabled));
         }
         _ => {
             return Err(crate::messages::config::unknown_key(key).into());

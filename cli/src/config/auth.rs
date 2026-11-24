@@ -200,12 +200,15 @@ fn anthropic_verification_request(
 
 /// Masks an API key for display.
 pub(super) fn mask_api_key(key: &str) -> String {
+    let char_count = key.chars().count();
     if key.trim().is_empty() {
         "not set".to_string()
-    } else if key.len() > 8 {
-        format!("{}***", &key[..8])
-    } else if key.len() > 4 {
-        format!("{}***", &key[..4])
+    } else if char_count > 8 {
+        let prefix: String = key.chars().take(8).collect();
+        format!("{prefix}***")
+    } else if char_count > 4 {
+        let prefix: String = key.chars().take(4).collect();
+        format!("{prefix}***")
     } else {
         "***".to_string()
     }
@@ -257,5 +260,13 @@ mod tests {
         assert!(has_stored_api_key("sk-test-key"));
         assert!(!has_stored_api_key(""));
         assert!(!has_stored_api_key("   "));
+    }
+
+    #[test]
+    fn test_mask_api_key_handles_non_ascii_characters() {
+        assert_eq!(mask_api_key("한글키입력실수1234"), "한글키입력실수1***");
+        assert_eq!(mask_api_key("짧은키12"), "짧은키1***");
+        assert_eq!(mask_api_key("짧은키"), "***");
+        assert_eq!(mask_api_key("짧키"), "***");
     }
 }

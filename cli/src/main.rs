@@ -61,17 +61,18 @@ async fn main() {
                 run_today_dry_run(verbose, target_date, include_automated);
             } else if worker {
                 if let Err(e) = run_worker(lang, target_date, no_cache, include_automated).await {
-                    let log_path = worker_log_path();
-                    if let Some(parent) = log_path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
+                    if let Ok(log_path) = worker_log_path() {
+                        if let Some(parent) = log_path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        let error_text = format!("{e}");
+                        let (redacted_error, _) = redactor::redact_text(&error_text);
+                        let _ = std::fs::write(&log_path, redacted_error);
+                        send_notification(
+                            crate::messages::background::NOTIFY_TITLE,
+                            &crate::messages::background::notify_failure(&log_path.display()),
+                        );
                     }
-                    let error_text = format!("{e}");
-                    let (redacted_error, _) = redactor::redact_text(&error_text);
-                    let _ = std::fs::write(&log_path, redacted_error);
-                    send_notification(
-                        crate::messages::background::NOTIFY_TITLE,
-                        &crate::messages::background::notify_failure(&log_path.display()),
-                    );
                     std::process::exit(1);
                 }
             } else if background {

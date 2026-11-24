@@ -193,7 +193,7 @@ fn check_config_file() -> Result<CheckResult, Box<dyn std::error::Error>> {
 }
 
 fn check_log_roots() -> CheckResult {
-    let cfg = crate::config::load_config_if_exists();
+    let cfg = crate::config::load_optional_config().ok().flatten();
     let ctx = crate::sources::CollectContext {
         date: chrono::Local::now().date_naive(),
         config: cfg.as_ref(),

@@ -69,14 +69,22 @@ fn settings(config: Option<&config::Config>) -> AntigravityInputConfig {
 /// Config roots first, then `~/.gemini/<data dir>/brain`, then the same
 /// folders under each Windows home when running inside WSL.
 fn discover_brain_roots(config_roots: Option<&[String]>) -> Vec<PathBuf> {
+    let home = dirs::home_dir();
+    discover_brain_roots_with_home(config_roots, home.as_deref())
+}
+
+fn discover_brain_roots_with_home(
+    config_roots: Option<&[String]>,
+    home: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = config_roots
         .unwrap_or_default()
         .iter()
-        .map(PathBuf::from)
+        .map(|r| config::expand_tilde_with_home(r, home))
         .collect();
 
-    if let Some(home) = dirs::home_dir() {
-        candidates.extend(brain_dirs_under_home(&home));
+    if let Some(home) = home {
+        candidates.extend(brain_dirs_under_home(home));
     }
 
     if cfg!(target_os = "linux") && roots::is_wsl_environment() {
@@ -1039,5 +1047,17 @@ mod tests {
         );
         assert_eq!(agy_history_path(&base.join("antigravity/brain")), None);
         assert_eq!(agy_history_path(&base.join("antigravity-ide/brain")), None);
+    }
+
+    #[test]
+    fn test_discover_brain_roots_expands_tilde_in_config_roots() {
+        let layout = Layout::new("rwd_tilde_antigravity");
+        let custom = layout.base.join("custom-brain");
+        std::fs::create_dir_all(&custom).expect("create custom brain");
+        let roots = discover_brain_roots_with_home(
+            Some(&["~/custom-brain".to_string()]),
+            Some(&layout.base),
+        );
+        assert_eq!(roots, vec![custom]);
     }
 }

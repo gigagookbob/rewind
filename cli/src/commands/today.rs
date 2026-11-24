@@ -16,14 +16,14 @@ pub(crate) async fn run_today(
     no_cache: bool,
     include_automated_flag: bool,
 ) -> Result<(), parser::ParseError> {
-    let mut loaded_config = config::load_config_if_exists();
-    if loaded_config.is_none() {
-        eprintln!("{}", crate::messages::error::NO_CONFIG);
-        std::process::exit(1);
-    }
-    let redactor_enabled = loaded_config.as_ref().unwrap().is_redactor_enabled();
+    let mut loaded_config = Some(config::load_required_config()?);
     let lang = resolve_lang(&lang_flag, &mut loaded_config)
         .map_err(|e| -> Box<dyn std::error::Error> { e })?;
+    let active_config = loaded_config
+        .as_ref()
+        .ok_or(crate::messages::error::NO_CONFIG)?;
+    let redactor_enabled = active_config.is_redactor_enabled();
+    let current_settings = cache::AnalysisSettings::from_config(active_config, &lang);
 
     let today = target_date;
 
@@ -59,8 +59,9 @@ pub(crate) async fn run_today(
     } else if let Some(cached) = cache::load_cache(today) {
         let count_matches = cache::fingerprints_match(&cached, &fingerprints);
         let timezone_matches = cache::is_timezone_compatible(&cached, today);
+        let settings_match = cache::is_settings_compatible(&cached, &current_settings);
 
-        if count_matches && timezone_matches {
+        if count_matches && timezone_matches && settings_match {
             println!("\n{}", crate::messages::status::CACHE_USED);
             let cached_sources = prepare_cached_sources(&cached, &run, redactor_enabled);
             // Caches written before the day summary existed get one now.
@@ -161,14 +162,14 @@ pub(crate) async fn run_today(
             date: today.to_string(),
             source_fingerprints: fingerprints,
             timezone_window_key: cache::timezone_window_key(today),
+            settings: Some(current_settings),
             sources: results,
             day_summary,
         };
         if let Err(e) = cache::save_cache(&cache_data, today) {
             eprintln!("{}", crate::messages::error::cache_save_failed(&e));
-        } else if verbose {
-            let cache_path = dirs::home_dir()
-                .expect(crate::messages::error::HOME_DIR_NOT_FOUND)
+        } else if verbose && let Some(home) = dirs::home_dir() {
+            let cache_path = home
                 .join(".rwd")
                 .join("cache")
                 .join(format!("today-{today}.json"));
@@ -268,7 +269,13 @@ pub(crate) fn run_today_dry_run(
     target_date: chrono::NaiveDate,
     include_automated_flag: bool,
 ) {
-    let loaded_config = config::load_config_if_exists();
+    let loaded_config = match config::load_optional_config() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("{YELLOW}\u{26A0} {e}{RESET}");
+            None
+        }
+    };
     let adapters = sources::registered_adapters();
     dry_run(
         &adapters,
@@ -436,6 +443,7 @@ mod tests {
             date: date.to_string(),
             source_fingerprints: original.fingerprint_table(),
             timezone_window_key: cache::timezone_window_key(date),
+            settings: None,
             sources: vec![("Claude Code".into(), analysis)],
             day_summary: None,
         };

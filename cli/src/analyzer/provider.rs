@@ -89,6 +89,14 @@ impl LlmProvider {
         }
     }
 
+    /// Maximum single-request input tokens safely under the model context window.
+    pub fn max_input_tokens(&self) -> u64 {
+        match &self.kind {
+            ProviderKind::Anthropic => 160_000,
+            ProviderKind::OpenAi => 100_000,
+        }
+    }
+
     /// Calls the insight-extraction API with the system prompt selected by language.
     pub async fn call_analysis_api(
         &self,
@@ -121,7 +129,7 @@ impl LlmProvider {
             get_day_prompt(lang),
             session_summaries,
             4_096,
-            super::planner::RateLimits::default_generous().input_tokens_per_minute,
+            self.max_input_tokens(),
         )
         .await
     }
@@ -138,7 +146,7 @@ impl LlmProvider {
             get_slack_prompt(lang),
             session_summaries,
             4_096,
-            super::planner::RateLimits::default_generous().input_tokens_per_minute,
+            self.max_input_tokens(),
         )
         .await
     }

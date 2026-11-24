@@ -4,7 +4,7 @@ use super::planner::RateLimits;
 use serde::{Deserialize, Serialize};
 
 const API_URL: &str = "https://api.openai.com/v1/chat/completions";
-pub(super) const MODEL: &str = "gpt-4o";
+pub(crate) const MODEL: &str = "gpt-4o";
 
 /// OpenAI Chat Completions request body.
 #[derive(Serialize)]
@@ -80,12 +80,15 @@ struct UsageInfo {
 #[derive(Deserialize)]
 struct Choice {
     message: ChoiceMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 /// The message inside a choice (role is always "assistant").
 #[derive(Deserialize)]
 struct ChoiceMessage {
-    content: String,
+    #[serde(default)]
+    content: Option<String>,
 }
 
 /// Calls the OpenAI Chat Completions API and returns the raw text response.
@@ -123,7 +126,12 @@ pub(super) async fn send_request(
     }
 
     let chat_response: ChatResponse = response.json().await?;
+    decode_response(chat_response)
+}
 
+fn decode_response(
+    chat_response: ChatResponse,
+) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
     let usage = chat_response
         .usage
         .map(|u| super::ApiUsage {
@@ -132,12 +140,29 @@ pub(super) async fn send_request(
         })
         .unwrap_or_default();
 
-    let text = chat_response
+    let choice = chat_response
         .choices
         .first()
         .ok_or(crate::messages::error::OPENAI_EMPTY_CHOICES)?;
 
-    Ok((text.message.content.clone(), usage))
+    if choice.finish_reason.as_deref() == Some("length") {
+        return Err(super::OutputTruncated { usage }.into());
+    }
+
+    let text = choice
+        .message
+        .content
+        .as_deref()
+        .ok_or(crate::messages::error::API_NO_TEXT_BLOCK)?;
+
+    Ok((text.to_string(), usage))
+}
+
+#[cfg(test)]
+pub(super) fn decode_test_response(
+    raw: &str,
+) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
+    decode_response(serde_json::from_str(raw)?)
 }
 
 /// Minimal request body for probing (no response_format needed).
@@ -226,7 +251,11 @@ mod tests {
 
         let response: ChatResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.choices.len(), 1);
-        assert_eq!(response.choices[0].message.content, "{\"sessions\": []}");
+        assert_eq!(
+            response.choices[0].message.content.as_deref(),
+            Some("{\"sessions\": []}")
+        );
+        assert_eq!(response.choices[0].finish_reason.as_deref(), Some("stop"));
     }
 
     /// Verifies .first() returns None for an empty choices array.
@@ -249,5 +278,40 @@ mod tests {
         let request = ChatRequest::new("Return JSON", "daily work", 128, true);
         let value = serde_json::to_value(request).expect("serialized request");
         assert_eq!(value["response_format"]["type"], "json_object");
+    }
+
+    #[test]
+    fn test_parse_openai_response_allows_null_content() {
+        let json = r#"{
+            "choices": [
+                {
+                    "message": { "role": "assistant", "content": null },
+                    "finish_reason": "content_filter"
+                }
+            ]
+        }"#;
+        let response: ChatResponse = serde_json::from_str(json).expect("null content parses");
+        assert_eq!(response.choices.len(), 1);
+        let err = decode_test_response(json).unwrap_err().to_string();
+        assert_eq!(err, crate::messages::error::API_NO_TEXT_BLOCK);
+    }
+
+    #[test]
+    fn test_decode_response_finish_reason_length_returns_truncated() {
+        let json = r#"{
+            "choices": [
+                {
+                    "message": { "role": "assistant", "content": "{\"sessions\":[" },
+                    "finish_reason": "length"
+                }
+            ],
+            "usage": { "prompt_tokens": 12, "completion_tokens": 4096 }
+        }"#;
+        let err = decode_test_response(json).unwrap_err();
+        assert!(
+            err.downcast_ref::<super::super::OutputTruncated>()
+                .is_some()
+        );
+        assert!(err.to_string().contains("4096"));
     }
 }

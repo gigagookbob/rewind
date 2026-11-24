@@ -258,13 +258,25 @@ pub struct SessionSummary {
 /// Returns all existing Claude project roots in priority order.
 /// Priority: config overrides -> native home -> WSL Windows homes.
 pub fn discover_claude_log_roots(config_roots: Option<&[String]>) -> Vec<PathBuf> {
+    let home = dirs::home_dir();
+    discover_claude_log_roots_with_home(config_roots, home.as_deref())
+}
+
+fn discover_claude_log_roots_with_home(
+    config_roots: Option<&[String]>,
+    home: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     if let Some(roots) = config_roots {
-        candidates.extend(roots.iter().map(PathBuf::from));
+        candidates.extend(
+            roots
+                .iter()
+                .map(|r| crate::config::expand_tilde_with_home(r, home)),
+        );
     }
 
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = home {
         candidates.push(home.join(".claude").join("projects"));
     }
 
@@ -1135,5 +1147,18 @@ mod tests {
         assert_eq!(filtered.counts.interactive, 0);
         assert_eq!(filtered.counts.automated, 0);
         assert!(summaries.is_empty());
+    }
+
+    #[test]
+    fn test_discover_claude_log_roots_expands_tilde_in_config_roots() {
+        let base = std::env::temp_dir().join(format!("rwd_tilde_claude_{}", std::process::id()));
+        let custom = base.join("custom-claude");
+        std::fs::create_dir_all(&custom).expect("create custom root");
+        let roots = discover_claude_log_roots_with_home(
+            Some(&["~/custom-claude".to_string()]),
+            Some(&base),
+        );
+        std::fs::remove_dir_all(&base).ok();
+        assert_eq!(roots, vec![custom]);
     }
 }

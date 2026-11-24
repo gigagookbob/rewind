@@ -53,7 +53,7 @@ pub mod config {
     pub const NAV_HINT: &str =
         "  \u{2191}\u{2193} Navigate \u{00B7} Enter Select \u{00B7} Esc Exit";
     pub const NO_CHANGE: &str = "  No change";
-    pub const USAGE: &str = "Usage: `rwd config` (interactive) or `rwd config <key> <value>` (keys: output-path, provider, api-key, openai-api-key, anthropic-api-key, anthropic-workspace-id, claude-include-automated)";
+    pub const USAGE: &str = "Usage: `rwd config` (interactive) or `rwd config <key> <value>` (keys: output-path, provider, api-key, openai-api-key, anthropic-api-key, anthropic-workspace-id, claude-include-automated, redactor, lang)";
 
     pub fn config_saved(path: &dyn std::fmt::Display) -> String {
         format!("Config saved. {path}")
@@ -93,8 +93,16 @@ pub mod config {
 
     pub fn unknown_key(key: &str) -> String {
         format!(
-            "Unknown config key: '{key}'. Available: output-path, provider, api-key, openai-api-key, anthropic-api-key, anthropic-workspace-id, claude-include-automated"
+            "Unknown config key: '{key}'. Available: output-path, provider, api-key, openai-api-key, anthropic-api-key, anthropic-workspace-id, claude-include-automated, redactor, lang"
         )
+    }
+
+    pub fn redactor_changed(enabled: bool) -> String {
+        if enabled {
+            "Sensitive data masking enabled.".to_string()
+        } else {
+            "Sensitive data masking disabled.".to_string()
+        }
     }
 
     pub fn claude_include_automated_changed(enabled: bool) -> String {
@@ -179,6 +187,10 @@ pub mod error {
     }
 
     pub const NO_CONFIG: &str = "No config found. Run `rwd init` first.";
+
+    pub fn config_parse_failed(path: &dyn std::fmt::Display) -> String {
+        format!("Failed to parse config at {path}. Check TOML syntax or run `rwd doctor`.")
+    }
     pub const NO_CACHE: &str = "No cache found. Running today analysis first...";
     pub const NO_CACHE_AFTER_ANALYSIS: &str = "No cache found even after analysis.";
     pub const NO_SESSIONS: &str = "No sessions to summarize.";
@@ -638,13 +650,9 @@ pub mod verbose {
         input: u64,
         output: u64,
     ) -> String {
+        let short: String = session_id.chars().take(8).collect();
         format!(
             "\u{2713} [{i}/{total}] {short} done in {secs:.1}s (input: {input} / output: {output})",
-            short = if session_id.len() >= 8 {
-                &session_id[..8]
-            } else {
-                session_id
-            },
         )
     }
 
@@ -689,5 +697,13 @@ mod tests {
         let server_error = error::release_check_failed(503);
         assert!(server_error.contains("HTTP 503"));
         assert!(server_error.contains("temporarily unavailable"));
+    }
+
+    #[test]
+    fn test_step_done_detail_handles_non_ascii_session_id() {
+        let msg = super::verbose::step_done_detail(1, 2, "세션아이디12345", 1.5, 10, 20);
+        assert!(msg.contains("세션아이디123"), "{msg}");
+        let emoji = super::verbose::step_done_detail(1, 2, "🎉세션", 1.0, 1, 1);
+        assert!(emoji.contains("🎉세션"), "{emoji}");
     }
 }

@@ -19,6 +19,40 @@ pub struct UpdateCheckCache {
     pub latest_version: String,
 }
 
+/// Analysis-affecting configuration recorded inside `TodayCache`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnalysisSettings {
+    pub lang: crate::config::Lang,
+    pub provider: String,
+    pub model: String,
+    pub redactor_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anthropic_workspace_id: Option<String>,
+}
+
+impl AnalysisSettings {
+    pub fn from_config(config: &crate::config::Config, lang: &crate::config::Lang) -> Self {
+        let model = match config.llm.provider.as_str() {
+            "anthropic" => crate::analyzer::anthropic::MODEL,
+            "openai" => crate::analyzer::openai::MODEL,
+            _ => "",
+        }
+        .to_string();
+        let anthropic_workspace_id = if config.llm.provider == "anthropic" {
+            config.llm.anthropic_workspace_id().ok().flatten()
+        } else {
+            None
+        };
+        Self {
+            lang: lang.clone(),
+            provider: config.llm.provider.clone(),
+            model,
+            redactor_enabled: config.is_redactor_enabled(),
+            anthropic_workspace_id,
+        }
+    }
+}
+
 /// Cached analysis data for a single day.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TodayCache {
@@ -35,6 +69,9 @@ pub struct TodayCache {
     /// Legacy caches may not have this field.
     #[serde(default)]
     pub timezone_window_key: Option<String>,
+    /// Settings under which `sources` were analyzed; `None` in legacy caches.
+    #[serde(default)]
+    pub settings: Option<AnalysisSettings>,
     /// Per-source analysis results.
     pub sources: Vec<(String, AnalysisResult)>,
     /// Day digest shown on top of the note. Caches written before it existed
@@ -96,6 +133,12 @@ pub fn is_timezone_compatible(cache: &TodayCache, date: NaiveDate) -> bool {
         // If the current timezone window cannot be resolved, fall back to existing behavior.
         None => true,
     }
+}
+
+/// Returns whether cached results were generated under the current analysis settings.
+/// Legacy caches without `settings` return `false` to trigger a one-time refresh.
+pub fn is_settings_compatible(cache: &TodayCache, current: &AnalysisSettings) -> bool {
+    cache.settings.as_ref() == Some(current)
 }
 
 /// Returns cache directory path: ~/.rwd/cache/
@@ -195,6 +238,7 @@ mod tests {
             date: date.to_string(),
             source_fingerprints: FingerprintTable::new(),
             timezone_window_key,
+            settings: None,
             sources: Vec::new(),
             day_summary: None,
         }
@@ -325,5 +369,47 @@ mod tests {
 
         let incompatible_cache = empty_today_cache("2026-04-11", Some("wrong".to_string()));
         assert!(!is_timezone_compatible(&incompatible_cache, date));
+    }
+
+    #[test]
+    fn test_is_settings_compatible_detects_setting_changes() {
+        let mut config = crate::config::Config {
+            llm: crate::config::LlmConfig {
+                provider: "anthropic".into(),
+                openai_api_key: String::new(),
+                anthropic_api_key: "sk-ant".into(),
+                anthropic_workspace_id: Some("wrkspc_one".into()),
+                legacy_api_key: String::new(),
+            },
+            output: crate::config::OutputConfig {
+                path: "/tmp/vault".into(),
+            },
+            redactor: None,
+            lang: Some(crate::config::Lang::Ko),
+            input: None,
+        };
+        let base = AnalysisSettings::from_config(&config, &crate::config::Lang::Ko);
+        let mut cache = empty_today_cache("2026-11-24", None);
+        assert!(!is_settings_compatible(&cache, &base));
+
+        cache.settings = Some(base.clone());
+        assert!(is_settings_compatible(&cache, &base));
+
+        let en = AnalysisSettings::from_config(&config, &crate::config::Lang::En);
+        assert!(!is_settings_compatible(&cache, &en));
+
+        config.redactor = Some(crate::config::RedactorConfig { enabled: false });
+        let unredacted = AnalysisSettings::from_config(&config, &crate::config::Lang::Ko);
+        assert!(!is_settings_compatible(&cache, &unredacted));
+
+        config.redactor = None;
+        config.llm.anthropic_workspace_id = Some("wrkspc_two".into());
+        let other_ws = AnalysisSettings::from_config(&config, &crate::config::Lang::Ko);
+        assert!(!is_settings_compatible(&cache, &other_ws));
+
+        config.llm.provider = "openai".into();
+        let openai = AnalysisSettings::from_config(&config, &crate::config::Lang::Ko);
+        assert!(!is_settings_compatible(&cache, &openai));
+        assert!(openai.anthropic_workspace_id.is_none());
     }
 }

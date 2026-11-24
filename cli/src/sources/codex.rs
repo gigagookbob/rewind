@@ -122,44 +122,60 @@ impl SourceAdapter for CodexAdapter {
             }
             let history = analyzer::evidence::codex_source_messages(&entries, &[]);
             let day_entries = codex::filter_entries_by_local_date(entries, ctx.date);
-            let summary = codex::summarize_codex_entries(&day_entries);
+            let mut summary = codex::summarize_codex_entries(&day_entries);
+            let is_fallback_id = summary.session_id.is_empty()
+                && matches!(merge_key, SessionMergeKey::RootAndFile { .. });
+            if summary.session_id.is_empty() {
+                summary.session_id = fallback_session_id(&merge_key);
+            }
             if summary.user_count > 0 || summary.assistant_count > 0 {
-                sessions.push((summary, day_entries, history));
+                sessions.push(PendingCodexSession {
+                    summary,
+                    is_fallback_id,
+                    entries: day_entries,
+                    history,
+                });
             }
         }
 
-        sessions.sort_by(|(_, left_entries, _), (_, right_entries, _)| {
-            let left_first = activity_timestamps(left_entries).min();
-            let right_first = activity_timestamps(right_entries).min();
+        sessions.sort_by(|left, right| {
+            let left_first = activity_timestamps(&left.entries).min();
+            let right_first = activity_timestamps(&right.entries).min();
             match (left_first, right_first) {
                 (Some(left), Some(right)) => left.cmp(&right),
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
                 (None, None) => std::cmp::Ordering::Equal,
             }
+            .then_with(|| left.summary.session_id.cmp(&right.summary.session_id))
         });
+        ensure_unique_session_ids(&mut sessions);
 
         let interactive_ids: HashSet<&str> = sessions
             .iter()
-            .map(|(summary, _, _)| summary.session_id.as_str())
+            .map(|session| session.summary.session_id.as_str())
             .collect();
         let attachment = attach_subagents(&subagent_rollouts, &interactive_ids, ctx.date);
 
-        let entry_count = sessions.iter().map(|(_, entries, _)| entries.len()).sum();
+        let entry_count = sessions.iter().map(|session| session.entries.len()).sum();
         let mut collected = Vec::with_capacity(sessions.len());
-        for (summary, entries, history) in &sessions {
+        for session in &sessions {
             let lines = attachment
                 .runs_by_parent
-                .get(&summary.session_id)
+                .get(&session.summary.session_id)
                 .map(|runs| subagent::subagent_lines(runs))
                 .unwrap_or_default();
-            let mut task =
-                analyzer::build_codex_session_task(entries, &summary.session_id, Self::ID, &lines)?;
-            analyzer::context::prepend_reference(&mut task, history.clone(), window);
+            let mut task = analyzer::build_codex_session_task(
+                &session.entries,
+                &session.summary.session_id,
+                Self::ID,
+                &lines,
+            )?;
+            analyzer::context::prepend_reference(&mut task, session.history.clone(), window);
             collected.push(CollectedSession {
                 task,
-                first_activity: activity_timestamps(entries).min(),
-                last_activity: activity_timestamps(entries).max(),
+                first_activity: activity_timestamps(&session.entries).min(),
+                last_activity: activity_timestamps(&session.entries).max(),
                 token_usage: None,
             });
         }
@@ -190,6 +206,53 @@ impl SourceAdapter for CodexAdapter {
                 attachment.unattached,
             )],
         })
+    }
+}
+
+struct PendingCodexSession {
+    summary: codex::CodexSessionSummary,
+    is_fallback_id: bool,
+    entries: Vec<CodexEntry>,
+    history: Vec<analyzer::evidence::SourceMessage>,
+}
+
+fn fallback_session_id(merge_key: &SessionMergeKey) -> String {
+    match merge_key {
+        SessionMergeKey::SessionId(id) => id.clone(),
+        SessionMergeKey::RootAndFile {
+            rollout_filename, ..
+        } => std::path::Path::new(rollout_filename)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| !stem.is_empty())
+            .unwrap_or("codex-session")
+            .to_string(),
+    }
+}
+
+fn ensure_unique_session_ids(sessions: &mut [PendingCodexSession]) {
+    let mut used: HashSet<String> = sessions
+        .iter()
+        .filter(|session| !session.is_fallback_id)
+        .map(|session| session.summary.session_id.clone())
+        .collect();
+    for session in sessions.iter_mut() {
+        if !session.is_fallback_id {
+            continue;
+        }
+        if used.insert(session.summary.session_id.clone()) {
+            continue;
+        }
+        let base = session.summary.session_id.clone();
+        let mut suffix = 2usize;
+        loop {
+            let candidate = format!("{base}-{suffix}");
+            if used.insert(candidate.clone()) {
+                session.summary.session_id = candidate;
+                break;
+            }
+            suffix += 1;
+        }
     }
 }
 
@@ -995,5 +1058,42 @@ mod tests {
         assert_eq!(to_local(session.first_activity), "00:10");
         assert_eq!(to_local(session.last_activity), "20:44");
         assert_eq!(session.token_usage, None);
+    }
+
+    #[test]
+    fn test_collect_assigns_unique_fallback_ids_when_session_meta_is_missing() {
+        let base = unique_temp_dir("rwd_test_codex_missing_meta");
+        let root_a = base.join("root-a");
+        let root_b = base.join("root-b");
+        let day_a = root_a.join("2099/01/01");
+        let day_b = root_b.join("2099/01/01");
+        std::fs::create_dir_all(&day_a).unwrap();
+        std::fs::create_dir_all(&day_b).unwrap();
+
+        let body = |msg: &str| {
+            [
+                format!(
+                    r#"{{"timestamp":"2099-01-01T12:01:00Z","type":"event_msg","payload":{{"type":"user_message","message":"{msg}"}}}}"#
+                ),
+                assistant("2099-01-01T12:02:00Z", "ok"),
+            ]
+            .join("\n")
+        };
+
+        std::fs::write(day_a.join("rollout-alpha.jsonl"), body("first")).unwrap();
+        std::fs::write(day_a.join("rollout-beta.jsonl"), body("second")).unwrap();
+        std::fs::write(day_b.join("rollout-alpha.jsonl"), body("third")).unwrap();
+
+        let collection = collect(vec![root_a, root_b]);
+        std::fs::remove_dir_all(&base).ok();
+
+        assert_eq!(collection.sessions.len(), 3);
+        let ids: HashSet<&str> = collection
+            .sessions
+            .iter()
+            .map(|s| s.task.session_id.as_str())
+            .collect();
+        assert_eq!(ids.len(), 3);
+        assert!(ids.iter().all(|id| !id.is_empty()));
     }
 }

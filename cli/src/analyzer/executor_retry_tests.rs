@@ -68,3 +68,71 @@ async fn test_truncation_stops_at_provider_cap_without_json_retry() {
     assert!(!error.contains("private partial"));
     assert_eq!(recorded.payloads().len(), 4);
 }
+
+fn openai_response(finish_reason: &str, content: &str, output_tokens: u64) -> String {
+    serde_json::json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": content},
+            "finish_reason": finish_reason
+        }],
+        "usage": {"prompt_tokens": 10, "completion_tokens": output_tokens}
+    })
+    .to_string()
+}
+
+#[tokio::test]
+async fn test_openai_truncation_retries_up_to_cap_and_sums_usage() {
+    let (provider, recorded) = fake_provider(provider::ProviderKind::OpenAi, true, vec![]);
+    let complete = serde_json::to_string(&tests::sample_analysis("s1")).unwrap();
+    recorded.set_openai_responses(vec![
+        openai_response("length", "partial-1", 4096),
+        openai_response("length", "partial-2", 8192),
+        openai_response("stop", &complete, 9000),
+    ]);
+    let (result, usage) = analyze_prompt(
+        "input".into(),
+        &provider,
+        "auth",
+        &crate::config::Lang::Ko,
+        &tests::sample_limits(1000, 100_000),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.sessions[0].session_id, "s1");
+    assert_eq!(usage.output_tokens, 4096 + 8192 + 9000);
+    let budgets: Vec<_> = recorded
+        .payloads()
+        .iter()
+        .map(|p| {
+            serde_json::from_str::<serde_json::Value>(p).unwrap()["max_tokens"]
+                .as_u64()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(budgets, vec![4096, 8192, 16384]);
+
+    // Stops at the 16384 OpenAI cap without falling back to JSON retry.
+    let (provider, recorded) = fake_provider(provider::ProviderKind::OpenAi, true, vec![]);
+    recorded.set_openai_responses(
+        [4096, 8192, 16384]
+            .into_iter()
+            .map(|n| openai_response("length", "still truncated", n))
+            .collect(),
+    );
+    let task =
+        redaction_tests::planned(vec![("USER".into(), "hello".into())], StepStrategy::Direct);
+    let err = run_planned_task(
+        task,
+        &provider,
+        "auth",
+        &tests::sample_limits(1000, 100_000),
+        &crate::config::Lang::Ko,
+    )
+    .await
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(err.contains("16384"), "{err}");
+    assert!(!err.contains("still truncated"));
+    assert_eq!(recorded.payloads().len(), 3);
+}

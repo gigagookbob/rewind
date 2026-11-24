@@ -14,6 +14,7 @@ struct Recorded {
     requests: Vec<OutboundRequest>,
     responses: VecDeque<Result<String, String>>,
     anthropic_responses: VecDeque<String>,
+    openai_responses: VecDeque<String>,
 }
 
 impl Recording {
@@ -22,9 +23,13 @@ impl Recording {
         request: OutboundRequest,
     ) -> Result<(String, ApiUsage), AnalyzerError> {
         let mut state = self.0.lock().unwrap();
+        let is_anthropic = matches!(&request, OutboundRequest::Anthropic(_));
         state.requests.push(request);
-        if let Some(raw) = state.anthropic_responses.pop_front() {
+        if is_anthropic && let Some(raw) = state.anthropic_responses.pop_front() {
             return super::anthropic::decode_test_response(&raw);
+        }
+        if !is_anthropic && let Some(raw) = state.openai_responses.pop_front() {
+            return super::openai::decode_test_response(&raw);
         }
         state
             .responses
@@ -50,6 +55,10 @@ impl Recording {
 
     pub(super) fn set_anthropic_responses(&self, responses: Vec<String>) {
         self.0.lock().unwrap().anthropic_responses = responses.into();
+    }
+
+    pub(super) fn set_openai_responses(&self, responses: Vec<String>) {
+        self.0.lock().unwrap().openai_responses = responses.into();
     }
 }
 

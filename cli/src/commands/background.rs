@@ -4,19 +4,19 @@ use super::{parse_date_flag, resolve_lang, run_today};
 use crate::{config, output};
 
 /// Returns the path to ~/.rwd/worker.lock
-fn worker_lock_path() -> std::path::PathBuf {
-    dirs::home_dir()
-        .expect(crate::messages::error::HOME_DIR_NOT_FOUND)
+fn worker_lock_path() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    Ok(dirs::home_dir()
+        .ok_or(crate::messages::error::HOME_DIR_NOT_FOUND)?
         .join(".rwd")
-        .join("worker.lock")
+        .join("worker.lock"))
 }
 
 /// Returns the path to ~/.rwd/worker.log
-pub(crate) fn worker_log_path() -> std::path::PathBuf {
-    dirs::home_dir()
-        .expect(crate::messages::error::HOME_DIR_NOT_FOUND)
+pub(crate) fn worker_log_path() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    Ok(dirs::home_dir()
+        .ok_or(crate::messages::error::HOME_DIR_NOT_FOUND)?
         .join(".rwd")
-        .join("worker.log")
+        .join("worker.log"))
 }
 
 /// Checks if a process with the given PID is alive (no unsafe, uses kill -0 command).
@@ -33,7 +33,9 @@ fn is_process_alive(pid: u32) -> bool {
 
 /// Checks if a lock file exists with a live process.
 fn is_worker_running() -> bool {
-    let lock_path = worker_lock_path();
+    let Ok(lock_path) = worker_lock_path() else {
+        return false;
+    };
     if !lock_path.exists() {
         return false;
     }
@@ -60,19 +62,16 @@ pub(crate) fn spawn_worker(
         return Ok(());
     }
 
+    let mut loaded_config = Some(config::load_required_config()?);
+    let lang = resolve_lang(lang_flag, &mut loaded_config)?;
+
     let exe = std::env::current_exe()?;
-    let mut args = vec!["today".to_string(), "--worker".to_string()];
-    if let Some(lang) = lang_flag {
-        args.push("--lang".to_string());
-        args.push(lang.clone());
-    } else {
-        // Resolve lang from config now (before detaching) to avoid stdin prompt in worker.
-        // Fail synchronously if language cannot be resolved.
-        let mut loaded_config = config::load_config_if_exists();
-        let lang = resolve_lang(&None, &mut loaded_config)?;
-        args.push("--lang".to_string());
-        args.push(lang.to_string());
-    }
+    let mut args = vec![
+        "today".to_string(),
+        "--worker".to_string(),
+        "--lang".to_string(),
+        lang.to_string(),
+    ];
     if let Some(date) = date_flag {
         args.push("--date".to_string());
         args.push(date.clone());
@@ -114,7 +113,7 @@ pub(crate) async fn run_worker(
     no_cache: bool,
     include_automated: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let lock_path = worker_lock_path();
+    let lock_path = worker_lock_path()?;
     if let Some(parent) = lock_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -128,8 +127,9 @@ pub(crate) async fn run_worker(
     match result {
         Ok(()) => {
             // Clean up previous error log on success
-            let log_path = worker_log_path();
-            if log_path.exists() {
+            if let Ok(log_path) = worker_log_path()
+                && log_path.exists()
+            {
                 let _ = std::fs::remove_file(&log_path);
             }
             send_notification(
@@ -144,6 +144,9 @@ pub(crate) async fn run_worker(
 
 /// Sends an OS notification via notify-rust.
 pub(crate) fn send_notification(title: &str, body: &str) {
+    if std::env::var_os("RWD_DISABLE_NOTIFICATIONS").is_some() {
+        return;
+    }
     let mut notification = notify_rust::Notification::new();
     notification.summary(title).body(body);
 
