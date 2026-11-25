@@ -1,7 +1,7 @@
 //! Antigravity adapter: reads agy CLI, Antigravity app, and Antigravity IDE
 //! conversations from `<brain>/<conversation id>/.system_generated/logs/transcript_full.jsonl`.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -113,6 +113,8 @@ fn agy_history_path(root: &Path) -> Option<PathBuf> {
 #[derive(Debug, Default)]
 struct Conversation {
     steps: Vec<TranscriptStep>,
+    /// Data folders (parent of each `brain/` root) holding this conversation.
+    data_dirs: Vec<PathBuf>,
     /// History files of the agy roots holding this conversation.
     agy_histories: Vec<PathBuf>,
     /// Found under a non-agy root (app, IDE, or another configured folder).
@@ -176,6 +178,11 @@ fn load_conversations(
             let id = entry.file_name().to_string_lossy().into_owned();
             let conversation = conversations.entry(id).or_default();
             conversation.steps.extend(steps);
+            if let Some(data_dir) = root.parent().map(Path::to_path_buf)
+                && !conversation.data_dirs.contains(&data_dir)
+            {
+                conversation.data_dirs.push(data_dir);
+            }
             match &history {
                 Some(path) if !conversation.agy_histories.contains(path) => {
                     conversation.agy_histories.push(path.clone());
@@ -210,18 +217,19 @@ fn merge_steps(steps: &mut Vec<TranscriptStep>) {
 /// Reads each agy history once. `None` entries mean the file could not be read.
 fn load_histories(
     conversations: &BTreeMap<String, Conversation>,
+    warn_missing: bool,
     unreadable: &mut Vec<String>,
-) -> HashMap<PathBuf, Option<HashSet<String>>> {
+) -> HashMap<PathBuf, Option<antigravity::AgyHistory>> {
     let mut histories = HashMap::new();
     for path in conversations.values().flat_map(|c| &c.agy_histories) {
         if histories.contains_key(path) {
             continue;
         }
-        let ids = antigravity::read_history_conversation_ids(path);
-        if ids.is_none() {
+        let history = antigravity::read_agy_history(path);
+        if history.is_none() && warn_missing {
             unreadable.push(verbose::antigravity_history_missing(&path.display()));
         }
-        histories.insert(path.clone(), ids);
+        histories.insert(path.clone(), history);
     }
     histories
 }
@@ -233,7 +241,7 @@ fn load_histories(
 fn is_print_mode(
     id: &str,
     conversation: &Conversation,
-    histories: &HashMap<PathBuf, Option<HashSet<String>>>,
+    histories: &HashMap<PathBuf, Option<antigravity::AgyHistory>>,
 ) -> bool {
     if conversation.in_app_root || conversation.agy_histories.is_empty() {
         return false;
@@ -246,10 +254,72 @@ fn is_print_mode(
     if user_inputs >= INTERACTIVE_MIN_USER_INPUTS {
         return false;
     }
-    conversation
-        .agy_histories
+    conversation.agy_histories.iter().all(|path| {
+        matches!(
+            histories.get(path),
+            Some(Some(history)) if !history.conversation_ids.contains(id)
+        )
+    })
+}
+
+type SummaryDbCache = HashMap<PathBuf, Option<HashMap<String, Vec<String>>>>;
+
+/// Resolves explicit workspace metadata for one Antigravity conversation without reading prose.
+fn resolve_conversation_project(
+    id: &str,
+    conversation: &Conversation,
+    histories: &HashMap<PathBuf, Option<antigravity::AgyHistory>>,
+    summary_cache: &mut SummaryDbCache,
+    unreadable: &mut Vec<String>,
+    is_wsl: bool,
+) -> Option<analyzer::retrospective::Project> {
+    let mut raw_entries = Vec::new();
+    for data_dir in &conversation.data_dirs {
+        let summaries = summary_cache.entry(data_dir.clone()).or_insert_with(|| {
+            let db_path = data_dir.join("conversation_summaries.db");
+            match antigravity::read_summary_db_workspaces(&db_path) {
+                Ok(rows) => rows,
+                Err(err) => {
+                    unreadable.push(verbose::antigravity_unreadable(
+                        &db_path.display(),
+                        &err.to_string(),
+                    ));
+                    None
+                }
+            }
+        });
+        if let Some(map) = summaries.as_ref()
+            && let Some(uris) = map.get(id)
+        {
+            raw_entries.extend(uris.iter().cloned());
+            continue;
+        }
+        let conv_db = data_dir.join("conversations").join(format!("{id}.db"));
+        match antigravity::read_conversation_db_workspaces(&conv_db) {
+            Ok(Some(uris)) => raw_entries.extend(uris),
+            Ok(None) => {}
+            Err(err) => unreadable.push(verbose::antigravity_unreadable(
+                &conv_db.display(),
+                &err.to_string(),
+            )),
+        }
+    }
+
+    if raw_entries.is_empty() {
+        for path in &conversation.agy_histories {
+            if let Some(Some(history)) = histories.get(path)
+                && let Some(workspaces) = history.workspaces.get(id)
+            {
+                raw_entries.extend(workspaces.iter().cloned());
+            }
+        }
+    }
+
+    let normalized: Vec<String> = raw_entries
         .iter()
-        .all(|path| matches!(histories.get(path), Some(Some(ids)) if !ids.contains(id)))
+        .filter_map(|raw| antigravity::normalize_workspace_entry(raw, is_wsl))
+        .collect();
+    analyzer::retrospective::Project::from_directories(normalized.iter().map(String::as_str))
 }
 
 fn is_conversation_step(step: &TranscriptStep) -> bool {
@@ -368,11 +438,13 @@ impl SourceAdapter for AntigravityAdapter {
                 .retain(|step| step.created_at.is_some_and(|ts| ts < window.end_utc));
             merge_steps(&mut conversation.steps);
         }
-        let histories = if settings.include_print_mode {
-            HashMap::new()
-        } else {
-            load_histories(&conversations, &mut stats.unreadable)
-        };
+        let histories = load_histories(
+            &conversations,
+            !settings.include_print_mode,
+            &mut stats.unreadable,
+        );
+        let is_wsl = cfg!(target_os = "linux") && roots::is_wsl_environment();
+        let mut summary_cache = SummaryDbCache::new();
 
         let mut print_mode = 0;
         let mut entry_count = 0;
@@ -398,11 +470,19 @@ impl SourceAdapter for AntigravityAdapter {
                 continue;
             }
 
+            let project = resolve_conversation_project(
+                id,
+                conversation,
+                &histories,
+                &mut summary_cache,
+                &mut stats.unreadable,
+                is_wsl,
+            );
             entry_count += day_steps.len();
             let prompt_text = build_prompt(id, &messages);
             sessions.push(CollectedSession {
                 task: analyzer::SessionTask {
-                    project: None,
+                    project,
                     evidence_sources: evidence_sources(&day_steps),
                     source: Self::ID,
                     session_id: id.clone(),
@@ -1059,5 +1139,143 @@ mod tests {
             Some(&layout.base),
         );
         assert_eq!(roots, vec![custom]);
+    }
+
+    fn write_summary_db(data_dir: &Path, rows: &[(&str, &str)]) {
+        std::fs::create_dir_all(data_dir).unwrap();
+        let conn = rusqlite::Connection::open(data_dir.join("conversation_summaries.db")).unwrap();
+        conn.execute(
+            "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT NOT NULL)",
+            [],
+        )
+        .unwrap();
+        for (id, uris) in rows {
+            conn.execute(
+                "INSERT INTO conversation_summaries (conversation_id, workspace_uris) VALUES (?1, ?2)",
+                [id, uris],
+            )
+            .unwrap();
+        }
+    }
+
+    fn write_conv_db(data_dir: &Path, id: &str, uri: &str) {
+        let dir = data_dir.join("conversations");
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = rusqlite::Connection::open(dir.join(format!("{id}.db"))).unwrap();
+        conn.execute(
+            "CREATE TABLE trajectory_metadata_blob (id TEXT PRIMARY KEY, data BLOB)",
+            [],
+        )
+        .unwrap();
+        let mut inner = vec![0x0a, uri.len() as u8];
+        inner.extend_from_slice(uri.as_bytes());
+        let mut blob = vec![0x0a, inner.len() as u8];
+        blob.extend_from_slice(&inner);
+        conn.execute(
+            "INSERT INTO trajectory_metadata_blob (id, data) VALUES ('main', ?1)",
+            [blob],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_collect_populates_project_from_summary_db_and_keeps_outside_project_none() {
+        let layout = Layout::new("rwd_antigravity_summary_project");
+        write_transcript(&layout.app(), CONV_A, &single_turn());
+        write_transcript(&layout.app(), CONV_B, &single_turn());
+        write_summary_db(
+            &layout.base.join("antigravity"),
+            &[
+                (CONV_A, r#"["file:///Users/max/Workspace/hobby/rewind"]"#),
+                (CONV_B, ""),
+            ],
+        );
+
+        let collection = collect(vec![layout.app()]);
+        let by_id: HashMap<&str, Option<&str>> = collection
+            .sessions
+            .iter()
+            .map(|s| {
+                (
+                    s.task.session_id.as_str(),
+                    s.task.project.as_ref().map(|p| p.directory.as_str()),
+                )
+            })
+            .collect();
+        assert_eq!(
+            by_id.get(CONV_A).copied().flatten(),
+            Some("/Users/max/Workspace/hobby/rewind")
+        );
+        assert_eq!(by_id.get(CONV_B).copied().flatten(), None);
+    }
+
+    #[test]
+    fn test_collect_falls_back_to_conversation_db_when_summary_db_is_missing_or_empty() {
+        let layout = Layout::new("rwd_antigravity_conv_db_fallback");
+        write_transcript(&layout.ide(), CONV_A, &single_turn());
+        std::fs::create_dir_all(layout.base.join("antigravity-ide")).unwrap();
+        std::fs::write(
+            layout
+                .base
+                .join("antigravity-ide/conversation_summaries.db"),
+            b"",
+        )
+        .unwrap();
+        write_conv_db(
+            &layout.base.join("antigravity-ide"),
+            CONV_A,
+            "file:///Users/max/Workspace/zerorder/sophi-mvp",
+        );
+
+        let collection = collect(vec![layout.ide()]);
+        assert_eq!(collection.sessions.len(), 1);
+        assert_eq!(
+            collection.sessions[0]
+                .task
+                .project
+                .as_ref()
+                .map(|p| p.directory.as_str()),
+            Some("/Users/max/Workspace/zerorder/sophi-mvp")
+        );
+    }
+
+    #[test]
+    fn test_collect_falls_back_to_agy_history_workspace_and_isolates_corrupt_db() {
+        let layout = Layout::new("rwd_antigravity_history_corrupt_fallback");
+        write_transcript(&layout.agy(), CONV_A, &single_turn());
+        let agy_dir = layout.base.join(AGY_DATA_DIR);
+        std::fs::create_dir_all(&agy_dir).unwrap();
+        std::fs::write(
+            agy_dir.join("conversation_summaries.db"),
+            b"not sqlite bytes",
+        )
+        .unwrap();
+        std::fs::write(
+            agy_dir.join(AGY_HISTORY_FILE),
+            json!({
+                "display": "SECRET_DISPLAY",
+                "conversationId": CONV_A,
+                "workspace": "/Users/max/cli-repo"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let collection = collect(vec![layout.agy()]);
+        assert_eq!(collection.sessions.len(), 1);
+        assert_eq!(
+            collection.sessions[0]
+                .task
+                .project
+                .as_ref()
+                .map(|p| p.directory.as_str()),
+            Some("/Users/max/cli-repo")
+        );
+        assert!(
+            collection
+                .verbose_lines
+                .iter()
+                .any(|line| line.contains("conversation_summaries.db"))
+        );
     }
 }

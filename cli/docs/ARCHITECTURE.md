@@ -133,8 +133,9 @@ Dependency direction: `commands` and `doctor` → `sources` → `parser` and `an
 - Format: Each line is one conversation step with `step_index`, `type`, `created_at` (UTC), `content`, `thinking`, `tool_calls`. Missing or unknown fields and broken or half-written lines are skipped
 - Read steps: `USER_INPUT` (only the text inside `<USER_REQUEST>`) and `PLANNER_RESPONSE` (thinking and answer as one `ASSISTANT` line, tool names as `TOOL` lines). Tool arguments, tool outputs, and every other step type are not sent to the LLM
 - Session: one conversation folder; the same id under several folders is merged by `step_index`. Steps are filtered by `created_at`; files not modified since the target date start are not opened
-- Excluded as `print-mode`: agy conversations whose id is missing from `~/.gemini/antigravity-cli/history.jsonl` and that have at most one user input (non-interactive `agy -p` runs). App and IDE folders are never excluded. Only `conversationId` is read from `history.jsonl`
-- Not read: `transcript.jsonl` (truncated copy), `chunks/` (split copy), `conversations/*.db` and `*.pb`, and the credential and settings files under `~/.gemini`
+- Excluded as `print-mode`: agy conversations whose id is missing from `~/.gemini/antigravity-cli/history.jsonl` and that have at most one user input (non-interactive `agy -p` runs). App and IDE folders are never excluded. Only `conversationId` and `workspace` are read from `history.jsonl`; typed prompt text (`display`) is never read
+- Project path: resolved read-only from `<data_dir>/conversation_summaries.db` (`workspace_uris` column), falling back to `<data_dir>/conversations/<conversation id>.db` (`trajectory_metadata_blob` `id = 'main'`) when missing or omitted (such as `antigravity-ide`), and then `history.jsonl` (`workspace`). `file://` URIs are percent-decoded (and mapped to `/mnt/<drive>/...` under WSL) before passing to `Project::from_directories`. Conversations with no workspace (`outside-of-project`) stay ungrouped
+- Not read: `transcript.jsonl` (truncated copy), `chunks/` (split copy), step tables/payloads inside `conversations/*.db`, `*.pb`, and credential or settings files under `~/.gemini`
 - No token usage is recorded, so the info box shows no token totals for this source
 - Settings: `[input.antigravity] enabled` (default `true`), `roots`, `include_print_mode` (default `false`)
 

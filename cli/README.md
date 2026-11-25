@@ -285,9 +285,10 @@ Codex messages send only the text itself: the typed `message` or `input_text` fo
 
 Antigravity sessions:
 - Read by default from `~/.gemini/antigravity-cli/brain` (agy CLI), `~/.gemini/antigravity/brain` (Antigravity app), and `~/.gemini/antigravity-ide/brain` (Antigravity IDE). In WSL, the same folders under Windows homes are also checked.
-- Each conversation's `.system_generated/logs/transcript_full.jsonl` is the only file read in these folders. One conversation is one session.
+- Each conversation's `.system_generated/logs/transcript_full.jsonl` is the only transcript file read in these folders. One conversation is one session.
 - Only your typed request, the model's thinking and answers, and tool names are sent to the LLM. Tool arguments, tool outputs, and app-added metadata are not.
-- Non-interactive `agy -p` runs are skipped by default: agy conversations whose id is not in `~/.gemini/antigravity-cli/history.jsonl` and that have at most one prompt. Only conversation ids are read from that file. App and IDE conversations are never skipped this way.
+- For project grouping, workspace directories are read read-only from `<data_dir>/conversation_summaries.db` (`workspace_uris`), `<data_dir>/conversations/<conversation id>.db` (`trajectory_metadata_blob`) when the summary DB is absent or lacks the row, and `history.jsonl` (`workspace`). Conversation payloads in SQLite and typed `display` strings in `history.jsonl` are not read.
+- Non-interactive `agy -p` runs are skipped by default: agy conversations whose id is not in `~/.gemini/antigravity-cli/history.jsonl` and that have at most one prompt. Only `conversationId` and `workspace` are read from that file. App and IDE conversations are never skipped this way.
 - Token usage is not recorded for Antigravity, so no token totals are shown for it.
 - Settings (all optional):
 ```toml
