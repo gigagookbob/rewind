@@ -98,6 +98,7 @@ impl LlmProvider {
     }
 
     /// Calls the insight-extraction API with the system prompt selected by language.
+    #[cfg(test)]
     pub async fn call_analysis_api(
         &self,
         api_key: &str,
@@ -117,6 +118,27 @@ impl LlmProvider {
         .await
     }
 
+    /// Calls the insight-extraction API with automatic `max_tokens` expansion
+    /// when output is truncated before reaching `max_output_tokens()`.
+    pub(super) async fn call_analysis_api_with_retry(
+        &self,
+        api_key: &str,
+        conversation_text: &str,
+        initial_max_tokens: u32,
+        lang: &Lang,
+        input_budget: u64,
+    ) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
+        self.call_api_with_truncation_retry(
+            api_key,
+            get_system_prompt(lang),
+            conversation_text,
+            initial_max_tokens,
+            true,
+            input_budget,
+        )
+        .await
+    }
+
     /// Calls the API for the private day digest placed on top of the daily note.
     pub async fn call_day_summary_api(
         &self,
@@ -124,7 +146,7 @@ impl LlmProvider {
         session_summaries: &str,
         lang: &Lang,
     ) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
-        self.call_text_api(
+        self.call_text_api_with_retry(
             api_key,
             get_day_prompt(lang),
             session_summaries,
@@ -141,7 +163,7 @@ impl LlmProvider {
         session_summaries: &str,
         lang: &Lang,
     ) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
-        self.call_text_api(
+        self.call_text_api_with_retry(
             api_key,
             get_slack_prompt(lang),
             session_summaries,
@@ -153,6 +175,7 @@ impl LlmProvider {
 
     /// Calls the API with an arbitrary system prompt for plain-text output
     /// (day summary, Slack message, chunk summarization).
+    #[cfg(test)]
     pub async fn call_text_api(
         &self,
         api_key: &str,
@@ -170,6 +193,67 @@ impl LlmProvider {
             input_budget,
         )
         .await
+    }
+
+    /// Calls `call_text_api` with automatic `max_tokens` expansion on truncation.
+    pub(super) async fn call_text_api_with_retry(
+        &self,
+        api_key: &str,
+        system_prompt: &str,
+        conversation_text: &str,
+        initial_max_tokens: u32,
+        input_budget: u64,
+    ) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
+        self.call_api_with_truncation_retry(
+            api_key,
+            system_prompt,
+            conversation_text,
+            initial_max_tokens,
+            false,
+            input_budget,
+        )
+        .await
+    }
+
+    async fn call_api_with_truncation_retry(
+        &self,
+        api_key: &str,
+        system: &str,
+        text: &str,
+        initial_max_tokens: u32,
+        json_output: bool,
+        input_budget: u64,
+    ) -> Result<(String, super::ApiUsage), super::AnalyzerError> {
+        let cap = u32::try_from(self.max_output_tokens())?;
+        let mut max_tokens = initial_max_tokens.min(cap);
+        let mut total_usage = super::ApiUsage::default();
+        loop {
+            match self
+                .call_api(api_key, system, text, max_tokens, json_output, input_budget)
+                .await
+            {
+                Ok((raw_response, mut usage)) => {
+                    usage.input_tokens += total_usage.input_tokens;
+                    usage.output_tokens += total_usage.output_tokens;
+                    return Ok((raw_response, usage));
+                }
+                Err(error) => {
+                    let Some(truncated) = error.downcast_ref::<super::OutputTruncated>() else {
+                        return Err(error);
+                    };
+                    if max_tokens >= cap {
+                        return Err(error);
+                    }
+                    total_usage.input_tokens += truncated.usage.input_tokens;
+                    total_usage.output_tokens += truncated.usage.output_tokens;
+                    let next = max_tokens.saturating_mul(2).min(cap);
+                    eprintln!(
+                        "LLM output truncated; retrying with max_tokens {max_tokens} -> {next}"
+                    );
+                    max_tokens = next;
+                }
+            }
+        }
     }
 
     async fn call_api(

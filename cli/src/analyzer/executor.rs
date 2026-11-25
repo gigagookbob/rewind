@@ -490,42 +490,18 @@ async fn analyze_prompt(
     lang: &crate::config::Lang,
     limits: &planner::RateLimits,
 ) -> Result<(AnalysisResult, ApiUsage), AnalyzerError> {
-    let cap = u32::try_from(provider.max_output_tokens())?;
-    let mut max_tokens = 4_096.min(cap);
-    let mut total_usage = ApiUsage::default();
-    loop {
-        match provider
-            .call_analysis_api(
-                api_key,
-                &prompt,
-                max_tokens,
-                lang,
-                limits
-                    .input_tokens_per_minute
-                    .min(provider.max_input_tokens()),
-            )
-            .await
-        {
-            Ok((raw_response, usage)) => {
-                total_usage.input_tokens += usage.input_tokens;
-                total_usage.output_tokens += usage.output_tokens;
-                return Ok((insight::parse_response(&raw_response)?, total_usage));
-            }
-            Err(error) => {
-                let Some(truncated) = error.downcast_ref::<super::OutputTruncated>() else {
-                    return Err(error);
-                };
-                if max_tokens >= cap {
-                    return Err(error);
-                }
-                total_usage.input_tokens += truncated.usage.input_tokens;
-                total_usage.output_tokens += truncated.usage.output_tokens;
-                let next = max_tokens.saturating_mul(2).min(cap);
-                eprintln!("LLM output truncated; retrying with max_tokens {max_tokens} -> {next}");
-                max_tokens = next;
-            }
-        }
-    }
+    let (raw_response, usage) = provider
+        .call_analysis_api_with_retry(
+            api_key,
+            &prompt,
+            4_096,
+            lang,
+            limits
+                .input_tokens_per_minute
+                .min(provider.max_input_tokens()),
+        )
+        .await?;
+    Ok((insight::parse_response(&raw_response)?, usage))
 }
 
 #[cfg(test)]
