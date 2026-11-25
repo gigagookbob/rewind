@@ -6,10 +6,12 @@
 // below come from reading this machine's logs.
 
 use chrono::{DateTime, Utc};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::path::Path;
+use std::time::Duration;
 
 /// User prompt step. Verified: all 86 USER_INPUT lines wrap the typed text
 /// in <USER_REQUEST>.
@@ -95,40 +97,309 @@ pub fn extract_user_request(content: &str) -> &str {
     body[..end].trim()
 }
 
-/// Only `conversationId` is read; the typed text (`display`) is never
-/// deserialized.
+/// Only `conversationId` and `workspace` are read; the typed text (`display`)
+/// is never deserialized.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct HistoryLine {
     #[serde(rename = "conversationId")]
     conversation_id: Option<String>,
+    workspace: Option<String>,
 }
 
-/// Reads the conversation ids recorded in agy's `history.jsonl`.
+/// Conversation ids and workspace hints extracted from `agy`'s `history.jsonl`.
+#[derive(Debug, Default)]
+pub struct AgyHistory {
+    pub conversation_ids: HashSet<String>,
+    pub workspaces: HashMap<String, Vec<String>>,
+}
+
+/// Reads conversation ids and workspace paths from `agy`'s `history.jsonl`.
 ///
-/// Returns `None` when the file is missing or unreadable, so the caller can
-/// tell "cannot detect `agy -p` runs" apart from "this id is not in history".
-/// Broken lines are skipped.
-pub fn read_history_conversation_ids(path: &Path) -> Option<HashSet<String>> {
+/// Returns `None` when the file is missing or unreadable. Broken lines are skipped.
+pub fn read_agy_history(path: &Path) -> Option<AgyHistory> {
     let file = std::fs::File::open(path).ok()?;
     let reader = std::io::BufReader::new(file);
-    let mut ids = HashSet::new();
+    let mut history = AgyHistory::default();
 
     for line in reader.split(b'\n') {
         let line = line.ok()?;
         let Ok(text) = std::str::from_utf8(&line) else {
             continue;
         };
-        if let Ok(HistoryLine {
-            conversation_id: Some(id),
-        }) = serde_json::from_str::<HistoryLine>(text)
+        if let Ok(parsed) = serde_json::from_str::<HistoryLine>(text)
+            && let Some(id) = parsed.conversation_id
             && !id.is_empty()
         {
-            ids.insert(id);
+            if let Some(ws) = parsed.workspace.map(|w| w.trim().to_string())
+                && !ws.is_empty()
+            {
+                let entries = history.workspaces.entry(id.clone()).or_default();
+                if !entries.contains(&ws) {
+                    entries.push(ws);
+                }
+            }
+            history.conversation_ids.insert(id);
         }
     }
 
-    Some(ids)
+    Some(history)
+}
+
+/// Normalizes a `file://` URI or local path into a local absolute directory path.
+pub fn normalize_workspace_entry(raw: &str, is_wsl: bool) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = if trimmed.starts_with("file://") {
+        file_uri_to_local_path(trimmed)?
+    } else if trimmed.contains("://") || trimmed.contains('\0') {
+        return None;
+    } else {
+        trimmed.to_string()
+    };
+
+    if is_wsl && let Some(wsl) = windows_drive_to_wsl(&path) {
+        return Some(wsl);
+    }
+    Some(path)
+}
+
+fn file_uri_to_local_path(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("file://")?;
+    let raw_path = if let Some(after_host) = rest.strip_prefix("localhost/") {
+        format!("/{after_host}")
+    } else if rest.starts_with('/') {
+        rest.to_string()
+    } else {
+        return None;
+    };
+
+    let decoded = percent_decode_utf8(&raw_path)?;
+    let bytes = decoded.as_bytes();
+    if bytes.len() >= 3
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && bytes[2] == b':'
+        && (bytes.len() == 3 || bytes[3] == b'/' || bytes[3] == b'\\')
+    {
+        return Some(decoded[1..].to_string());
+    }
+    Some(decoded)
+}
+
+fn percent_decode_utf8(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hi = (*bytes.get(i + 1)? as char).to_digit(16)?;
+            let lo = (*bytes.get(i + 2)? as char).to_digit(16)?;
+            out.push(((hi << 4) | lo) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    let decoded = String::from_utf8(out).ok()?;
+    (!decoded.contains('\0')).then_some(decoded)
+}
+
+fn windows_drive_to_wsl(path: &str) -> Option<String> {
+    let mut chars = path.chars();
+    let drive = chars.next()?;
+    if !drive.is_ascii_alphabetic() || chars.next()? != ':' {
+        return None;
+    }
+    match chars.next() {
+        Some('/') | Some('\\') => {
+            let rest = chars.as_str().replace('\\', "/");
+            Some(format!(
+                "/mnt/{}/{}",
+                drive.to_ascii_lowercase(),
+                rest.trim_start_matches('/')
+            ))
+        }
+        None => Some(format!("/mnt/{}", drive.to_ascii_lowercase())),
+        Some(_) => None,
+    }
+}
+
+/// Extracts `file://` workspace URIs from `trajectory_metadata_blob` protobuf bytes.
+///
+/// Outer repeated field 1 holds workspace metadata entries whose inner field 1 is
+/// the workspace URI string. Malformed or truncated bytes stop decoding safely.
+pub fn extract_workspace_uris_from_metadata_blob(bytes: &[u8]) -> Vec<String> {
+    let mut uris = Vec::new();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        let Some(tag) = decode_varint(bytes, &mut pos) else {
+            break;
+        };
+        let field_no = tag >> 3;
+        let wire_type = tag & 7;
+        if field_no == 1 && wire_type == 2 {
+            let Some(entry_bytes) = read_length_delimited(bytes, &mut pos) else {
+                break;
+            };
+            collect_inner_file_uris(entry_bytes, &mut uris);
+        } else if skip_protobuf_field(wire_type, bytes, &mut pos).is_none() {
+            break;
+        }
+    }
+    uris
+}
+
+fn collect_inner_file_uris(bytes: &[u8], out: &mut Vec<String>) {
+    let mut pos = 0;
+    while pos < bytes.len() {
+        let Some(tag) = decode_varint(bytes, &mut pos) else {
+            break;
+        };
+        let field_no = tag >> 3;
+        let wire_type = tag & 7;
+        if field_no == 1 && wire_type == 2 {
+            let Some(raw) = read_length_delimited(bytes, &mut pos) else {
+                break;
+            };
+            if let Ok(text) = std::str::from_utf8(raw)
+                && text.starts_with("file://")
+            {
+                out.push(text.to_string());
+            }
+        } else if skip_protobuf_field(wire_type, bytes, &mut pos).is_none() {
+            break;
+        }
+    }
+}
+
+fn decode_varint(bytes: &[u8], pos: &mut usize) -> Option<u64> {
+    let mut value = 0_u64;
+    let mut shift = 0_u32;
+    for _ in 0..10 {
+        let byte = *bytes.get(*pos)?;
+        *pos += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Some(value);
+        }
+        shift += 7;
+    }
+    None
+}
+
+fn read_length_delimited<'a>(bytes: &'a [u8], pos: &mut usize) -> Option<&'a [u8]> {
+    let len = usize::try_from(decode_varint(bytes, pos)?).ok()?;
+    let end = pos.checked_add(len)?;
+    let slice = bytes.get(*pos..end)?;
+    *pos = end;
+    Some(slice)
+}
+
+fn skip_protobuf_field(wire_type: u64, bytes: &[u8], pos: &mut usize) -> Option<()> {
+    match wire_type {
+        0 => {
+            decode_varint(bytes, pos)?;
+            Some(())
+        }
+        1 => {
+            let end = pos.checked_add(8)?;
+            bytes.get(*pos..end)?;
+            *pos = end;
+            Some(())
+        }
+        2 => {
+            read_length_delimited(bytes, pos)?;
+            Some(())
+        }
+        5 => {
+            let end = pos.checked_add(4)?;
+            bytes.get(*pos..end)?;
+            *pos = end;
+            Some(())
+        }
+        _ => None,
+    }
+}
+
+fn open_readonly_sqlite(path: &Path) -> Result<Option<Connection>, super::ParseError> {
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.len() == 0 => return Ok(None),
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    }
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.busy_timeout(Duration::from_millis(250))?;
+    Ok(Some(conn))
+}
+
+/// Reads `workspace_uris` for every conversation row in `conversation_summaries.db`.
+///
+/// Returns `Ok(None)` when the file does not exist or is empty so callers can fall back.
+pub fn read_summary_db_workspaces(
+    path: &Path,
+) -> Result<Option<HashMap<String, Vec<String>>>, super::ParseError> {
+    let Some(conn) = open_readonly_sqlite(path)? else {
+        return Ok(None);
+    };
+    let mut stmt =
+        conn.prepare("SELECT conversation_id, workspace_uris FROM conversation_summaries")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, Option<String>>(0)?,
+            row.get::<_, Option<String>>(1)?,
+        ))
+    })?;
+
+    let mut result = HashMap::new();
+    for row in rows {
+        let (id_opt, uris_opt) = row?;
+        let Some(id) = id_opt.filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        let raw = uris_opt.unwrap_or_default();
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            result.insert(id, Vec::new());
+            continue;
+        }
+        if let Ok(parsed) = serde_json::from_str::<Vec<String>>(trimmed) {
+            let filtered = parsed
+                .into_iter()
+                .filter(|s| !s.trim().is_empty())
+                .collect();
+            result.insert(id, filtered);
+        }
+    }
+    Ok(Some(result))
+}
+
+/// Reads workspace URIs from `trajectory_metadata_blob` (`id = 'main'`) in `conversations/<id>.db`.
+pub fn read_conversation_db_workspaces(
+    path: &Path,
+) -> Result<Option<Vec<String>>, super::ParseError> {
+    let Some(conn) = open_readonly_sqlite(path)? else {
+        return Ok(None);
+    };
+    let blob_opt: Option<Option<Vec<u8>>> = conn
+        .query_row(
+            "SELECT data FROM trajectory_metadata_blob WHERE id = 'main' LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let uris = match blob_opt {
+        Some(Some(blob)) if !blob.is_empty() => extract_workspace_uris_from_metadata_blob(&blob),
+        _ => Vec::new(),
+    };
+    Ok(Some(uris))
 }
 
 #[cfg(test)]
@@ -268,10 +539,10 @@ mod tests {
         )
         .expect("write history");
 
-        let ids = read_history_conversation_ids(&path).expect("history ids");
+        let history = read_agy_history(&path).expect("history ids");
         std::fs::remove_dir_all(&dir).ok();
 
-        let mut ids: Vec<String> = ids.into_iter().collect();
+        let mut ids: Vec<String> = history.conversation_ids.into_iter().collect();
         ids.sort();
         assert_eq!(ids, vec!["conv-a".to_string(), "conv-b".to_string()]);
     }
@@ -279,9 +550,177 @@ mod tests {
     #[test]
     fn test_read_history_conversation_ids_missing_file_returns_none() {
         let dir = unique_temp_dir("rwd_test_parser_antigravity_history_missing");
-        let ids = read_history_conversation_ids(&dir.join("history.jsonl"));
+        let history = read_agy_history(&dir.join("history.jsonl"));
         std::fs::remove_dir_all(&dir).ok();
 
-        assert!(ids.is_none());
+        assert!(history.is_none());
+    }
+
+    #[test]
+    fn test_normalize_workspace_entry_decodes_file_uris_and_wsl_drives() {
+        assert_eq!(
+            normalize_workspace_entry("file:///Users/max/Workspace/hobby/rewind", false),
+            Some("/Users/max/Workspace/hobby/rewind".to_string())
+        );
+        assert_eq!(
+            normalize_workspace_entry(
+                "file:///Users/max/%ED%95%9C%EA%B8%80%20%ED%8F%B4%EB%8D%94/app",
+                false
+            ),
+            Some("/Users/max/한글 폴더/app".to_string())
+        );
+        assert_eq!(
+            normalize_workspace_entry("file://localhost/Users/max/app", false),
+            Some("/Users/max/app".to_string())
+        );
+        assert_eq!(
+            normalize_workspace_entry("file://fileserver/share/app", false),
+            None
+        );
+        assert_eq!(
+            normalize_workspace_entry("https://example.com/app", false),
+            None
+        );
+        assert_eq!(normalize_workspace_entry("file:///bad%2Gpath", false), None);
+        assert_eq!(normalize_workspace_entry("file:///bad%00path", false), None);
+        assert_eq!(
+            normalize_workspace_entry("file:///C:/Users/me/repo", true),
+            Some("/mnt/c/Users/me/repo".to_string())
+        );
+        assert_eq!(
+            normalize_workspace_entry(r"C:\Users\me\repo", true),
+            Some("/mnt/c/Users/me/repo".to_string())
+        );
+        assert_eq!(
+            normalize_workspace_entry("file:///C:/Users/me/repo", false),
+            Some("C:/Users/me/repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_workspace_uris_from_metadata_blob_handles_valid_and_malformed_bytes() {
+        fn encode_ld(field_no: u64, payload: &[u8]) -> Vec<u8> {
+            let mut out = Vec::new();
+            let mut tag = (field_no << 3) | 2;
+            while tag >= 0x80 {
+                out.push((tag as u8 & 0x7f) | 0x80);
+                tag >>= 7;
+            }
+            out.push(tag as u8);
+            let mut len = payload.len();
+            while len >= 0x80 {
+                out.push((len as u8 & 0x7f) | 0x80);
+                len >>= 7;
+            }
+            out.push(len as u8);
+            out.extend_from_slice(payload);
+            out
+        }
+
+        let mut valid = Vec::new();
+        valid.extend_from_slice(&encode_ld(1, &encode_ld(1, b"file:///repo-one")));
+        valid.extend_from_slice(&encode_ld(1, &encode_ld(1, b"file:///repo-two")));
+        valid.extend_from_slice(&[0x10, 0x01]);
+        assert_eq!(
+            extract_workspace_uris_from_metadata_blob(&valid),
+            vec![
+                "file:///repo-one".to_string(),
+                "file:///repo-two".to_string()
+            ]
+        );
+
+        for broken in [b"".as_slice(), b"\x80", b"\x0a\xff\x01", b"\x0f"] {
+            assert!(extract_workspace_uris_from_metadata_blob(broken).is_empty());
+        }
+    }
+
+    #[test]
+    fn test_read_summary_and_conversation_dbs_in_readonly_mode() {
+        let dir = unique_temp_dir("rwd_test_parser_antigravity_dbs");
+        let missing = dir.join("missing.db");
+        assert!(read_summary_db_workspaces(&missing).unwrap().is_none());
+        assert!(!missing.exists());
+
+        let empty_db = dir.join("empty.db");
+        std::fs::write(&empty_db, b"").unwrap();
+        assert!(read_summary_db_workspaces(&empty_db).unwrap().is_none());
+        assert!(
+            read_conversation_db_workspaces(&empty_db)
+                .unwrap()
+                .is_none()
+        );
+
+        let summary_db = dir.join("conversation_summaries.db");
+        let conn = rusqlite::Connection::open(&summary_db).unwrap();
+        conn.execute(
+            "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT NOT NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversation_summaries VALUES ('c1', '[\"file:///Users/max/app\"]'), ('c2', '')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let summaries = read_summary_db_workspaces(&summary_db).unwrap().unwrap();
+        assert_eq!(
+            summaries.get("c1"),
+            Some(&vec!["file:///Users/max/app".to_string()])
+        );
+        assert_eq!(summaries.get("c2"), Some(&Vec::new()));
+
+        let conv_db = dir.join("c1.db");
+        let conn = rusqlite::Connection::open(&conv_db).unwrap();
+        conn.execute(
+            "CREATE TABLE trajectory_metadata_blob (id TEXT PRIMARY KEY, data BLOB)",
+            [],
+        )
+        .unwrap();
+        let mut blob = vec![0x0a, 0x16, 0x0a, 0x14];
+        blob.extend_from_slice(b"file:///Users/max/a1");
+        conn.execute(
+            "INSERT INTO trajectory_metadata_blob (id, data) VALUES ('main', ?1)",
+            [blob],
+        )
+        .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            read_conversation_db_workspaces(&conv_db).unwrap(),
+            Some(vec!["file:///Users/max/a1".to_string()])
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_read_agy_history_collects_workspaces_without_reading_display() {
+        let dir = unique_temp_dir("rwd_test_parser_antigravity_history_ws");
+        let path = dir.join("history.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"display":"DISPLAY_SECRET","workspace":"/Users/max/repo-a","conversationId":"conv-a"}"#,
+                "\n",
+                r#"{"display":"MORE","workspace":"/Users/max/repo-a","conversationId":"conv-a"}"#,
+                "\n",
+                r#"{"conversationId":"conv-b","workspace":""}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let history = read_agy_history(&path).expect("agy history");
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(history.conversation_ids.contains("conv-a"));
+        assert!(history.conversation_ids.contains("conv-b"));
+        assert_eq!(
+            history.workspaces.get("conv-a"),
+            Some(&vec!["/Users/max/repo-a".to_string()])
+        );
+        assert!(!history.workspaces.contains_key("conv-b"));
+        assert!(!format!("{history:?}").contains("DISPLAY_SECRET"));
     }
 }

@@ -273,11 +273,11 @@ pub async fn summarize_chunks(
         ));
 
         let response = provider
-            .call_text_api(
+            .call_text_api_with_retry(
                 api_key,
                 get_chunk_summarize_prompt(lang),
                 chunk_text,
-                2000,
+                2_000,
                 limits.input_tokens_per_minute.min(MAX_CHUNK_INPUT_TOKENS),
             )
             .await;
